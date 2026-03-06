@@ -23,7 +23,6 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ['S'], description: 'Change status' },
       { keys: ['P'], description: 'Change priority' },
       { keys: ['A'], description: 'Assign agent' },
-      { keys: ['L'], description: 'Toggle label' },
       { keys: ['X'], description: 'Mark done' },
     ],
   },
@@ -32,6 +31,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: ['Cmd', 'K'], description: 'Search / Commands' },
       { keys: ['['], description: 'Toggle sidebar' },
+      { keys: ['L'], description: 'Toggle chat bubble' },
       { keys: ['?'], description: 'Show shortcuts' },
     ],
   },

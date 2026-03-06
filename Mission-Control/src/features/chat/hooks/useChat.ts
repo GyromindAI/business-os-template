@@ -61,6 +61,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
   const [currentModel, setCurrentModel] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const intentionalStopRef = useRef(false)
+  // Track which session the current stream belongs to
   const streamSessionRef = useRef<string | null>(null)
 
   // Abort in-flight request on unmount
@@ -68,26 +69,28 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
     return () => { abortRef.current?.abort() }
   }, [])
 
+  // Detach stream when user switches to a different session.
+  // Agent Server keeps processing in background and saves via /api/chat/complete.
+  const detachStream = useCallback(() => {
+    if (!loading) return
+    intentionalStopRef.current = false
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+  }, [loading])
+
   const stopStreaming = useCallback(async () => {
-    // 1. Send graceful interrupt to agent server
+    intentionalStopRef.current = true
+    // 1. Send graceful interrupt to Agent Server
     fetch('/api/chat/interrupt', { method: 'POST' }).catch(() => {})
     // 2. Abort fetch as fallback
     abortRef.current?.abort()
   }, [])
 
-  // Detach stream when user switches to a different session.
-  // Agent keeps processing in background.
-  const detachStream = useCallback(() => {
-    if (!loading) return
-    intentionalStopRef.current = false
-    setLoading(false)
-  }, [loading])
-
-  const sendMessage = useCallback(async (text: string, opts?: { audioUrl?: string; effort?: string; imageUrl?: string; chatSessionId?: string }) => {
+  const sendMessage = useCallback(async (text: string, opts?: { audioUrl?: string; imageUrl?: string; effort?: string; chatSessionId?: string; context?: string }) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
-
-    streamSessionRef.current = opts?.chatSessionId ?? null
+    intentionalStopRef.current = false
 
     const userMsg: ChatMessage = {
       id: `u-${Date.now()}`,
@@ -109,6 +112,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
 
     setMessages((prev) => [...prev, userMsg, assistantMsg])
     setLoading(true)
+    streamSessionRef.current = opts?.chatSessionId ?? null
 
     abortRef.current = new AbortController()
 
@@ -116,7 +120,14 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, ...(opts?.effort && { effort: opts.effort }) }),
+        body: JSON.stringify({
+          message: trimmed,
+          ...(opts?.effort && { effort: opts.effort }),
+          ...(opts?.chatSessionId && { chatSessionId: opts.chatSessionId }),
+          ...(opts?.audioUrl && { audioUrl: opts.audioUrl }),
+          ...(opts?.imageUrl && { imageUrl: opts.imageUrl }),
+          ...(opts?.context && { context: opts.context }),
+        }),
         signal: abortRef.current.signal,
       })
 
@@ -137,7 +148,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
         return
       }
 
-      // Read SSE stream
+      // Read SSE stream -- batch text_delta updates via requestAnimationFrame
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -145,16 +156,15 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
       let compactMeta: CompactMeta | undefined
       let usageMeta: UsageMeta | undefined
       let toolCalls: ToolCall[] = []
-
-      // RAF text batching – avoid setState on every tiny text_delta
       let pendingFlush = false
       let rafId = 0
+
       const flushText = () => {
         pendingFlush = false
-        const snapshot = accumulatedText
+        const text = accumulatedText
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: snapshot } : m
+            m.id === assistantId ? { ...m, content: text } : m
           )
         )
       }
@@ -229,18 +239,20 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
               }
               break
 
-            case 'result':
+            case 'result': {
               cancelAnimationFrame(rafId)
               pendingFlush = false
-              accumulatedText = event.text
+              const finalText = (accumulatedText || event.text).trim()
+              accumulatedText = finalText
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: event.text, streaming: false, usage: usageMeta, compact: compactMeta, toolCalls: [...toolCalls] }
+                    ? { ...m, content: finalText, streaming: false, usage: usageMeta, compact: compactMeta, toolCalls: [...toolCalls] }
                     : m
                 )
               )
               break
+            }
 
             case 'model_changed':
               setCurrentModel(event.model)
@@ -268,7 +280,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
         }
       }
 
-      // Cancel any pending RAF flush
+      // Flush any pending text before marking stream done
       cancelAnimationFrame(rafId)
       if (pendingFlush) flushText()
 
@@ -286,8 +298,11 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
         onSave(trimmed, accumulatedText.trim(), opts?.audioUrl, opts?.imageUrl).catch(() => {})
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        // User aborted - mark message as done with what we have
+      const isAbort = err instanceof Error && err.name === 'AbortError'
+      const isNetworkDrop = err instanceof TypeError && /network|fetch|failed/i.test(err.message)
+
+      if (isAbort || isNetworkDrop) {
+        // Mark message as done with what we have
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId && m.streaming
@@ -295,21 +310,24 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
               : m
           )
         )
-        // Still save what we got
-        setMessages((prev) => {
-          const msg = prev.find((m) => m.id === assistantId)
-          if (msg?.content.trim() && onSave) {
-            onSave(trimmed, msg.content.trim(), opts?.audioUrl, opts?.imageUrl).catch(() => {})
-          }
-          return prev
-        })
+        // Only save partial content if user intentionally stopped
+        if (intentionalStopRef.current) {
+          setMessages((prev) => {
+            const msg = prev.find((m) => m.id === assistantId)
+            if (msg?.content.trim() && onSave) {
+              onSave(trimmed, msg.content.trim(), opts?.audioUrl, opts?.imageUrl).catch(() => {})
+            }
+            return prev
+          })
+        }
+        intentionalStopRef.current = false
         return
       }
 
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? { ...m, content: 'Connection interrupted. Send the message again.', error: true, streaming: false }
+            ? { ...m, content: 'Connection was interrupted. Please send the message again.', error: true, streaming: false }
             : m
         )
       )
@@ -320,7 +338,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
   }, [loading, onSave])
 
   const loadMessages = useCallback((
-    persisted: Array<{ id: string; role: 'user' | 'assistant'; content: string; created_at: string; audio_url?: string | null; metadata?: { source?: string; jobId?: string; jobLabel?: string } | null }>,
+    persisted: Array<{ id: string; role: 'user' | 'assistant'; content: string; created_at: string; audio_url?: string | null; image_url?: string | null; metadata?: { source?: string; jobId?: string; jobLabel?: string } | null }>,
   ) => {
     setMessages(
       persisted.map((m) => ({
@@ -329,6 +347,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
         content: m.content,
         timestamp: new Date(m.created_at),
         audioUrl: m.audio_url ?? undefined,
+        imageUrl: m.image_url ?? undefined,
         metadata: m.metadata ?? undefined,
       })),
     )
@@ -340,7 +359,13 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
 
   const appendMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => {
+      // Deduplicate by ID (exact match)
       if (prev.some((m) => m.id === msg.id)) return prev
+      // Deduplicate by role + content (handles temp ID vs Supabase UUID mismatch)
+      if (msg.content && prev.some((m) =>
+        m.role === msg.role &&
+        m.content.trim() === msg.content.trim()
+      )) return prev
       return [...prev, msg]
     })
   }, [])

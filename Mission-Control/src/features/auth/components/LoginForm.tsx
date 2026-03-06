@@ -8,12 +8,20 @@ import { login } from '@/actions/auth'
 export function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [returnTo, setReturnTo] = useState('/')
   const searchParams = useSearchParams()
 
-  // Show error if redirected from middleware (unauthorized email)
   useEffect(() => {
     if (searchParams.get('error') === 'unauthorized') {
       setError('Access denied. Your account is not authorized.')
+    }
+    // Priority: URL ?next= param (from middleware) > localStorage (fallback)
+    const nextParam = searchParams.get('next')
+    if (nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//')) {
+      setReturnTo(nextParam)
+    } else {
+      const last = localStorage.getItem('mc_lastRoute')
+      if (last && last !== '/') setReturnTo(last)
     }
   }, [searchParams])
 
@@ -21,6 +29,7 @@ export function LoginForm() {
     setLoading(true)
     setError(null)
 
+    formData.set('next', returnTo)
     const result = await login(formData)
 
     if (result?.error) {

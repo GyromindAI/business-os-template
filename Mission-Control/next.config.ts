@@ -5,8 +5,6 @@ const nextConfig: NextConfig = {
   experimental: {
     mcpServer: true,
   },
-  // ssh2 uses native crypto — keep it out of the Turbopack bundle
-  serverExternalPackages: ['ssh2'],
   // Allow images from Supabase Storage (generated images, avatars, etc.)
   images: {
     remotePatterns: [

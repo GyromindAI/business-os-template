@@ -6,7 +6,9 @@ import { PRIORITY_CONFIG } from '../utils/priority'
 import { X, ChevronDown, Bookmark } from 'lucide-react'
 import { useTemplatesStore, type TaskTemplate } from '@/shared/stores/templates-store'
 import { TemplatesPicker } from './TemplatesPicker'
-import type { TaskStatus, TaskPriority, Label, Agent } from '@/types/database'
+import { useAuth } from '@/hooks/useAuth'
+import { notifyTaskAssigned } from '@/lib/notifications'
+import type { TaskStatus, TaskPriority, Label, Profile } from '@/types/database'
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
   { value: 'backlog', label: 'Backlog' },
@@ -23,6 +25,7 @@ interface CreateTaskModalProps {
 export function CreateTaskModal({ isOpen, onClose, defaultStatus = 'backlog' }: CreateTaskModalProps) {
   const addTask = useTasksStore((s) => s.addTask)
   const addTemplate = useTemplatesStore((s) => s.addTemplate)
+  const { profile } = useAuth()
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -32,18 +35,18 @@ export function CreateTaskModal({ isOpen, onClose, defaultStatus = 'backlog' }: 
   const [selectedLabels, setSelectedLabels] = useState<Label[]>([])
   const [selectedAssignee, setSelectedAssignee] = useState<string>('')
   const [allLabels, setAllLabels] = useState<Label[]>([])
-  const [allAgents, setAllAgents] = useState<Agent[]>([])
+  const [allProfiles, setAllProfiles] = useState<Profile[]>([])
   const [priorityOpen, setPriorityOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [labelsRes, agentsRes] = await Promise.all([
+    const [labelsRes, profilesRes] = await Promise.all([
       supabase.from('labels').select('*').order('name'),
-      supabase.from('agents').select('*').order('name'),
+      supabase.from('profiles').select('*').order('full_name'),
     ])
     if (labelsRes.data) setAllLabels(labelsRes.data as Label[])
-    if (agentsRes.data) setAllAgents(agentsRes.data as Agent[])
+    if (profilesRes.data) setAllProfiles(profilesRes.data as Profile[])
   }, [])
 
   useEffect(() => {
@@ -77,12 +80,13 @@ export function CreateTaskModal({ isOpen, onClose, defaultStatus = 'backlog' }: 
       return
     }
 
-    // Assign agent
+    // Assign to profile (person)
     if (selectedAssignee) {
       await supabase.from('task_assignees').insert({
         task_id: task.id,
-        agent_id: selectedAssignee,
+        profile_id: selectedAssignee,
       })
+      notifyTaskAssigned(selectedAssignee, task.title, task.id, profile?.id)
     }
 
     // Assign labels
@@ -93,7 +97,7 @@ export function CreateTaskModal({ isOpen, onClose, defaultStatus = 'backlog' }: 
     }
 
     // Build full task object for store
-    const assignee = allAgents.find((a) => a.id === selectedAssignee)
+    const assignee = allProfiles.find((p) => p.id === selectedAssignee)
     addTask({
       ...task,
       sequence_number: task.sequence_number,
@@ -259,9 +263,9 @@ export function CreateTaskModal({ isOpen, onClose, defaultStatus = 'backlog' }: 
                 className="bg-white/[0.06] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-xs text-white/80 outline-none"
               >
                 <option value="">Unassigned</option>
-                {allAgents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.avatar} {agent.name}
+                {allProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.full_name ?? profile.email ?? 'User'}
                   </option>
                 ))}
               </select>

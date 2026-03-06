@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useTasksStore } from '@/shared/stores/tasks-store'
 import { useLayoutStore } from '@/shared/stores/layout-store'
+import { notifyTaskAssigned } from '@/lib/notifications'
 import type { TaskStatus, TaskPriority, TaskWithAssignees } from '@/types/database'
 
 const STATUS_CYCLE: TaskStatus[] = ['backlog', 'todo', 'in_progress', 'done']
@@ -72,7 +73,7 @@ export function useGlobalShortcuts({ onCreateTask, onShowHelp }: UseGlobalShortc
     updateTaskInDb(task.id, { status: next })
   }, [getFocusedTask, updateTask, updateTaskInDb])
 
-  // P — cycle priority on focused task (0→1→2→3→4→0)
+  // P — cycle priority on focused task (0->1->2->3->4->0)
   const cyclePriority = useCallback(() => {
     const task = getFocusedTask()
     if (!task) return
@@ -82,46 +83,32 @@ export function useGlobalShortcuts({ onCreateTask, onShowHelp }: UseGlobalShortc
     updateTaskInDb(task.id, { priority: next })
   }, [getFocusedTask, updateTask, updateTaskInDb])
 
-  // A — cycle assignee on focused task (rotate through agents)
+  // A — cycle assignee on focused task (rotate through team members)
   const cycleAssignee = useCallback(async () => {
     const task = getFocusedTask()
     if (!task) return
     const supabase = createClient()
-    const { data: agents } = await supabase.from('agents').select('*').order('name')
-    if (!agents || agents.length === 0) return
+    const { data: profiles } = await supabase.from('profiles').select('*').order('full_name')
+    if (!profiles || profiles.length === 0) return
 
     const currentAssigneeId = task.assignees[0]?.id ?? null
-    const currentIdx = currentAssigneeId ? agents.findIndex((a) => a.id === currentAssigneeId) : -1
-    const nextIdx = (currentIdx + 1) % agents.length
-    const nextAgent = agents[nextIdx]
+    const currentIdx = currentAssigneeId ? profiles.findIndex((p) => p.id === currentAssigneeId) : -1
+    const nextIdx = (currentIdx + 1) % profiles.length
+    const nextProfile = profiles[nextIdx]
 
     // Remove old assignees and add new one
     await supabase.from('task_assignees').delete().eq('task_id', task.id)
-    await supabase.from('task_assignees').insert({ task_id: task.id, agent_id: nextAgent.id })
-    updateTask(task.id, { assignees: [nextAgent] })
+    await supabase.from('task_assignees').insert({ task_id: task.id, profile_id: nextProfile.id })
+    updateTask(task.id, { assignees: [nextProfile] })
+    notifyTaskAssigned(nextProfile.id, task.title, task.id)
   }, [getFocusedTask, updateTask])
 
-  // L — cycle through labels on focused task (toggle first available)
-  const cycleLabel = useCallback(async () => {
-    const task = getFocusedTask()
-    if (!task) return
-    const supabase = createClient()
-    const { data: allLabels } = await supabase.from('labels').select('*').order('name')
-    if (!allLabels || allLabels.length === 0) return
-
-    const currentLabels = task.labels ?? []
-    // Find next label to toggle: first one not on the task, or remove first one if all applied
-    const unattached = allLabels.find((l) => !currentLabels.some((cl) => cl.id === l.id))
-    if (unattached) {
-      await supabase.from('task_labels').insert({ task_id: task.id, label_id: unattached.id })
-      updateTask(task.id, { labels: [...currentLabels, unattached] })
-    } else if (currentLabels.length > 0) {
-      // All labels attached, remove the first one
-      const toRemove = currentLabels[0]
-      await supabase.from('task_labels').delete().eq('task_id', task.id).eq('label_id', toRemove.id)
-      updateTask(task.id, { labels: currentLabels.filter((l) => l.id !== toRemove.id) })
-    }
-  }, [getFocusedTask, updateTask])
+  // L — toggle chat bubble visibility
+  const toggleChatBubble = useCallback(() => {
+    const current = localStorage.getItem('mc_chatBubbleHidden') === 'true'
+    localStorage.setItem('mc_chatBubbleHidden', String(!current))
+    window.dispatchEvent(new Event('mc:chatBubbleToggle'))
+  }, [])
 
   // X — mark focused task as done
   const markDone = useCallback(() => {
@@ -192,9 +179,9 @@ export function useGlobalShortcuts({ onCreateTask, onShowHelp }: UseGlobalShortc
           }
           break
         case 'l':
-          if (!e.metaKey && !e.ctrlKey && focusedTaskId) {
+          if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            cycleLabel()
+            toggleChatBubble()
           }
           break
         case 'x':
@@ -222,6 +209,6 @@ export function useGlobalShortcuts({ onCreateTask, onShowHelp }: UseGlobalShortc
     visibleTaskIds, focusedTaskId, selectedTaskId, pathname,
     focusNextTask, focusPrevTask, selectTask, focusTask,
     onCreateTask, onShowHelp, cycleStatus, cyclePriority,
-    cycleAssignee, cycleLabel, markDone, toggleLeftSidebar, router,
+    cycleAssignee, toggleChatBubble, markDone, toggleLeftSidebar, router,
   ])
 }

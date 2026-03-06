@@ -139,12 +139,12 @@ export function SearchDialog() {
       category: 'navigation',
     },
     {
-      id: 'go-activity',
-      label: 'Go to Activity',
-      description: 'View the activity feed',
+      id: 'go-ops',
+      label: 'Go to Ops',
+      description: 'View operations dashboard',
       icon: Activity,
       shortcut: 'G then A',
-      action: () => { close(); setSelectedView('activity'); router.push('/activity') },
+      action: () => { close(); setSelectedView('ops'); router.push('/ops') },
       category: 'navigation',
     },
     {

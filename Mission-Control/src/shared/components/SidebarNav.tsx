@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth'
 import {
   LayoutGrid,
   Activity,
+  Calendar,
   Settings,
   Users,
   CircleUserRound,
@@ -32,20 +33,26 @@ interface SavedView {
 const NAV_LINKS = [
   { href: '/', label: 'Board', icon: LayoutGrid },
   { href: '/chat', label: 'Chat', icon: Bot },
-  { href: '/activity', label: 'Activity', icon: Activity },
+  { href: '/ops', label: 'Ops', icon: Activity },
+  { href: '/calendar', label: 'Calendar', icon: Calendar },
   { href: '/draw', label: 'Draw', icon: PenLine },
   { href: '/settings', label: 'Settings', icon: Settings },
 ] as const
 
-export function SidebarNav() {
+interface SidebarNavProps {
+  members?: Profile[]
+  loading?: boolean
+}
+
+export function SidebarNav({ members: membersProp, loading: loadingProp }: SidebarNavProps) {
   const pathname = usePathname()
   const router = useRouter()
   const { setFilter, resetFilters } = useFiltersStore()
   const assigneeFilter = useFiltersStore((s) => s.filters.assigneeId)
   const { isOwner, role, profile } = useAuth()
 
-  const [members, setMembers] = useState<Profile[]>([])
-  const [membersLoading, setMembersLoading] = useState(true)
+  const [members, setMembers] = useState<Profile[]>(membersProp ?? [])
+  const [membersLoading, setMembersLoading] = useState(!membersProp)
   const [savedViews, setSavedViews] = useState<SavedView[]>([])
   const [viewsExpanded, setViewsExpanded] = useState(false)
   const [teamExpanded, setTeamExpanded] = useState(false)
@@ -54,14 +61,14 @@ export function SidebarNav() {
     const supabase = createClient()
     const [viewsRes, profilesRes] = await Promise.all([
       supabase.from('saved_views').select('id, name, filters').order('name'),
-      supabase.from('profiles').select('*').order('full_name'),
+      !membersProp ? supabase.from('profiles').select('*').order('full_name') : Promise.resolve({ data: null }),
     ])
     if (viewsRes.data) setSavedViews(viewsRes.data as unknown as SavedView[])
     if (profilesRes.data) {
       setMembers(profilesRes.data as Profile[])
       setMembersLoading(false)
     }
-  }, [])
+  }, [membersProp])
 
   useEffect(() => {
     fetchSidebarData()
@@ -110,13 +117,13 @@ export function SidebarNav() {
       <div className="px-3 pt-3 pb-1">
         <button
           onClick={handleMyTasks}
-          className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all duration-200
+          className={`w-full flex items-center gap-3.5 md:gap-2.5 px-2.5 py-3 md:py-2 rounded-lg text-sm md:text-xs font-medium transition-all duration-200
             ${myTasksActive
               ? 'bg-blue-500/15 text-blue-400 border border-blue-500/20'
               : 'text-white/50 hover:text-white/80 hover:bg-white/[0.06] border border-transparent'
             }`}
         >
-          <CircleUserRound size={15} />
+          <CircleUserRound className="size-6 md:size-[15px]" />
           <span className="flex-1 text-left">My Tasks</span>
         </button>
       </div>
@@ -133,13 +140,13 @@ export function SidebarNav() {
             <Link
               key={href}
               href={href}
-              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
+              className={`flex items-center gap-3.5 md:gap-2.5 px-2.5 py-2.5 md:py-1.5 rounded-lg text-sm md:text-xs font-medium transition-all duration-200
                 ${isActive
                   ? 'bg-white/[0.1] text-white'
                   : 'text-white/40 hover:text-white/70 hover:bg-white/[0.05]'
                 }`}
             >
-              <Icon size={15} />
+              <Icon className="size-6 md:size-[15px]" />
               {label}
             </Link>
           )
@@ -156,9 +163,9 @@ export function SidebarNav() {
           className="flex items-center justify-between px-5 py-2 cursor-pointer"
         >
           <div className="flex items-center gap-2">
-            {teamExpanded ? <ChevronDown size={12} className="text-white/25" /> : <ChevronRight size={12} className="text-white/25" />}
-            <Users size={14} className="text-white/40" />
-            <span className="text-[10px] uppercase tracking-widest text-white/40 font-semibold">Team</span>
+            {teamExpanded ? <ChevronDown className="size-5 md:size-3 text-white/25" /> : <ChevronRight className="size-5 md:size-3 text-white/25" />}
+            <Users className="size-5 md:size-3.5 text-white/40" />
+            <span className="text-xs md:text-[10px] uppercase tracking-widest text-white/40 font-semibold">Team</span>
           </div>
           <span className="text-[9px] bg-white/[0.06] px-1.5 py-0.5 rounded-full text-white/30">
             {members.length}
@@ -174,12 +181,18 @@ export function SidebarNav() {
                 ))}
               </div>
             ) : (
-              members.map(member => (
+              members.map(member => {
+                const isFiltered = useFiltersStore.getState().filters.assigneeId === member.id
+                return (
                 <button
                   key={member.id}
                   onClick={() => handleMemberClick(member.id)}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all duration-200
-                    hover:bg-white/[0.04] border border-transparent"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all duration-200
+                    ${isFiltered
+                      ? 'bg-white/[0.08] border border-white/[0.12]'
+                      : 'hover:bg-white/[0.04] border border-transparent'
+                    }
+                  `}
                 >
                   {member.avatar_url ? (
                     <img src={member.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
@@ -192,7 +205,8 @@ export function SidebarNav() {
                     <span className="text-xs text-white/80 truncate block">{member.full_name ?? 'User'}</span>
                   </div>
                 </button>
-              ))
+                )
+              })
             )}
           </div>
         )}
@@ -242,7 +256,7 @@ export function SidebarNav() {
 
       </div>{/* end scrollable content */}
 
-      {/* Sign out — fixed at bottom */}
+      {/* Sign out — fixed at bottom, always visible on all devices */}
       <div
         className="flex-shrink-0 px-3 border-t border-white/[0.06]"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
@@ -250,10 +264,10 @@ export function SidebarNav() {
         <form action={signout} className="pt-2">
           <button
             type="submit"
-            className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs text-white/30 hover:text-red-400/70 hover:bg-red-400/[0.05] transition-colors"
+            className="w-full flex items-center gap-3.5 md:gap-2.5 px-2.5 py-2.5 md:py-1.5 rounded-lg text-white/30 hover:text-red-400/70 hover:bg-red-400/[0.05] transition-colors"
           >
-            <LogOut size={14} />
-            Sign out
+            <LogOut className="size-5 md:size-3.5" />
+            <span className="text-sm md:text-xs">Sign out</span>
           </button>
         </form>
       </div>

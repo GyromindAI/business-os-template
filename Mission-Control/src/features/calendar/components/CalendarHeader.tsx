@@ -13,6 +13,7 @@ interface CalendarHeaderProps {
   goNext: () => void
   goPrev: () => void
   goToday: () => void
+  showPersonal?: boolean
 }
 
 const VIEW_OPTIONS: CalendarView[] = ['month', 'week', 'day']
@@ -33,7 +34,11 @@ export function CalendarHeader({
   goNext,
   goPrev,
   goToday,
+  showPersonal = false,
 }: CalendarHeaderProps) {
+  const visibleAccounts = showPersonal
+    ? ACCOUNT_OPTIONS
+    : ACCOUNT_OPTIONS.filter((o) => o.value !== 'personal')
   const title =
     view === 'month'
       ? format(currentDate, 'MMMM yyyy')
@@ -102,7 +107,7 @@ export function CalendarHeader({
 
         {/* Account filter */}
         <div className="flex items-center bg-white/[0.03] border border-white/[0.06] rounded-lg overflow-hidden">
-          {ACCOUNT_OPTIONS.map((opt) => (
+          {visibleAccounts.map((opt) => (
             <button
               key={opt.value}
               onClick={() => setAccountFilter(opt.value)}

@@ -63,7 +63,15 @@ business-os/
 ├── CLAUDE.md                         # This file (personalize it)
 ├── docs/
 │   └── SETUP_PROMPT.md              # Setup guide (paste into Claude Code for AI-assisted setup)
-├── .claude/prompts/                  # Development methodology
+├── .claude/
+│   ├── prompts/                     # Development methodology (Blueprint mode)
+│   ├── PRPs/                        # Product Requirements Proposals (feature blueprints)
+│   └── skills/                      # Claude Code skills
+│       ├── skill-creator/           # Create and iterate on new skills
+│       ├── excalidraw-diagram/      # Generate Excalidraw diagrams as PNG
+│       ├── google-workspace/        # Gmail + Calendar via gog CLI
+│       ├── supabase-mission-control/# Supabase database operations
+│       └── image-generation/        # AI image generation (OpenRouter + Gemini)
 ├── Mission-Control/                  # Dashboard (Next.js 16, Vercel)
 ├── agent-server/                     # AI agent (Claude Agent SDK)
 └── finance-os/                       # Finance tracker (Next.js 16)
@@ -103,3 +111,51 @@ cd agent-server && npx tsx src/schedule-cli.ts resume <id>
 - **Honest about limitations**. If you can't do something, say so.
 - **Never fabricate data**. If you don't have a data point, say so.
 - **Verify with real queries**. Don't trust potentially outdated documents.
+
+---
+
+## Golden Rules (NEVER Break)
+
+### 1. NEVER Fabricate Data
+If you don't have a data point, say "I don't have that data". NEVER invent metrics, tables, or statistics.
+
+### 2. NEVER Mix Time Windows
+If tracking data covers 3 days and revenue data covers 3 months, do NOT compare them as if they're the same window.
+
+### 3. Always Verify with Real Queries
+Before reporting any metric, run a real query (Supabase MCP, database, API). Don't trust documents that may be outdated.
+
+### 4. Validate Before Deploying
+Always run `npm run build` or `npm run typecheck` before considering a feature complete. Never push broken code.
+
+---
+
+## Historical Errors (Learn From These)
+
+> Document errors here as they happen. Each one makes the system stronger.
+
+<!--
+| Error | What Was Said | Reality |
+|-------|---------------|---------|
+| Example: "90% conversion" | Divided total users by daily visits | Time windows were incompatible |
+-->
+
+*No errors documented yet. Add them as they occur.*
+
+---
+
+## Credentials
+
+> Add your service credentials here after setup.
+
+<!--
+| Service | Field | Value |
+|---------|-------|-------|
+| Mission Control | URL | https://your-app.vercel.app |
+| Mission Control | Login | your-email@example.com |
+| Agent Server | HTTP Bridge | localhost:3099 |
+| Supabase | Project ID | [YOUR_PROJECT_ID] |
+| Supabase | URL | https://[ID].supabase.co |
+-->
+
+*Configure credentials during setup. See `docs/SETUP_PROMPT.md`.*

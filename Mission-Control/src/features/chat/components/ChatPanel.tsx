@@ -1,13 +1,13 @@
 'use client'
-import { useEffect, useRef, useState, KeyboardEvent, useCallback } from 'react'
-import { Plus, Send, Square, AlertCircle, MessageSquare, Copy, Check, Clock } from 'lucide-react'
+import { useEffect, useRef, useState, KeyboardEvent, useCallback, memo, startTransition, useMemo } from 'react'
+import { Plus, Send, Square, AlertCircle, MessageSquare, Copy, Check, Clock, ChevronDown, ImageIcon, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useLayoutStore } from '@/shared/stores/layout-store'
 import { AvatarLightbox } from '@/shared/components/AvatarLightbox'
 import { useChat, ChatMessage, ToolCall } from '../hooks/useChat'
 import { useChatHistory, ChatSession } from '../hooks/useChatHistory'
 import { ChatSessions } from './ChatSessions'
-import { MarkdownMessage } from './MarkdownMessage'
+import { MarkdownMessage, ImageLightbox } from './MarkdownMessage'
 import { AudioButton } from './AudioButton'
 import { VoiceInput } from './VoiceInput'
 import { WaveformPlayer } from './WaveformPlayer'
@@ -15,6 +15,7 @@ import { GlobalAudioBar } from './GlobalAudioBar'
 import { CommandPalette, SLASH_COMMANDS } from './CommandPalette'
 import { ModelPicker } from './ModelPicker'
 import { CompactSeparator } from './CompactSeparator'
+import { DateSeparator } from './DateSeparator'
 import { ToolCallCards } from './ToolCallCard'
 import { UsageBadge } from './UsageBadge'
 import { AudioProvider } from '../contexts/AudioContext'
@@ -39,21 +40,64 @@ function CopyBtn({ text }: { text: string }) {
   )
 }
 
+// ─── User image attachment (reuses lightbox from MarkdownMessage) ─────────────
+
+function UserImageAttachment({ src }: { src: string }) {
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  // Support multiple URLs separated by newline
+  const urls = src.split('\n').filter((u) => u.startsWith('http'))
+
+  return (
+    <>
+      <div className={`mb-1.5 ${urls.length > 1 ? 'flex flex-wrap gap-1.5' : ''}`}>
+        {urls.map((url, i) => (
+          <button
+            key={i}
+            onClick={() => setLightboxUrl(url)}
+            className={`block group/img relative rounded-lg overflow-hidden cursor-pointer focus:outline-none ${
+              urls.length > 1 ? 'w-[calc(50%-3px)]' : ''
+            }`}
+          >
+            <img
+              src={url}
+              alt={`Image ${i + 1}`}
+              className={`rounded-lg border border-white/[0.08] object-cover transition-transform duration-200 group-hover/img:scale-[1.02] ${
+                urls.length > 1 ? 'w-full h-24' : 'max-w-full max-h-48 object-contain'
+              }`}
+              loading="lazy"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center">
+              <span className="opacity-0 group-hover/img:opacity-100 transition-opacity text-white/80">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+      {lightboxUrl && <ImageLightbox src={lightboxUrl} alt="Attached image" onClose={() => setLightboxUrl(null)} />}
+    </>
+  )
+}
+
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+const MessageBubble = memo(function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user'
   const isVoiceNote = !!msg.audioUrl
   const [avatarOpen, setAvatarOpen] = useState(false)
 
-  const time = msg.timestamp.toLocaleTimeString(undefined, {
+  // Detect slash commands
+  const cmdMatch = isUser ? SLASH_COMMANDS.find((c) => msg.content.trim().startsWith(c.name)) : null
+  const isCommand = !!cmdMatch
+
+  const time = msg.timestamp.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
   })
 
   // Strip "[Voice note]: " prefix for display
   const transcription = isVoiceNote
-    ? msg.content.replace(/^\[Nota de voz\]:\s*/i, '').trim()
+    ? msg.content.replace(/^\[Voice note\]:\s*/i, '').replace(/^\[Nota de voz\]:\s*/i, '').trim()
     : null
 
   return (
@@ -63,18 +107,20 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           <button
             onClick={() => setAvatarOpen(true)}
             className="shrink-0 mb-1 rounded-full focus:outline-none"
-            title="View profile"
+            title="View Assistant profile"
           >
-            <img src="/avatar.png" alt="Assistant" className="w-7 h-7 rounded-full object-cover border border-violet-400/20 hover:border-violet-400/60 transition-colors" />
+            <img src="/icon.svg" alt="Assistant" className="w-7 h-7 rounded-full object-cover border border-violet-400/20 hover:border-violet-400/60 transition-colors" />
           </button>
-          {avatarOpen && <AvatarLightbox src="/avatar.png" alt="Assistant" onClose={() => setAvatarOpen(false)} />}
+          {avatarOpen && <AvatarLightbox src="/icon.svg" alt="Assistant" onClose={() => setAvatarOpen(false)} />}
         </>
       )}
 
       <div
         className={`group max-w-[75%] min-w-0 overflow-hidden rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed
           ${isUser
-            ? 'rounded-br-sm bg-white/[0.1] text-white'
+            ? isCommand
+              ? 'rounded-br-sm bg-violet-500/15 border border-violet-500/25 text-violet-200'
+              : 'rounded-br-sm bg-white/[0.1] text-white'
             : msg.error
               ? 'rounded-bl-sm bg-red-500/10 border border-red-500/20 text-red-300'
               : 'rounded-bl-sm bg-white/[0.05] border border-white/[0.06] text-white/90'
@@ -101,7 +147,10 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           <ToolCallCards tools={msg.toolCalls} />
         )}
 
-        {/* User voice note — waveform player is the main content */}
+        {/* User image attachment */}
+        {isUser && msg.imageUrl && <UserImageAttachment src={msg.imageUrl} />}
+
+        {/* User voice note */}
         {isVoiceNote && msg.audioUrl ? (
           <>
             <WaveformPlayer audioUrl={msg.audioUrl} messageId={msg.id} isUser={isUser} />
@@ -111,6 +160,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
               </p>
             )}
           </>
+        ) : isUser && isCommand && cmdMatch ? (
+          <div className="flex items-center gap-2">
+            <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${cmdMatch.iconClass}`}>
+              <cmdMatch.icon size={13} strokeWidth={1.75} />
+            </div>
+            <span className="font-mono font-semibold text-[13px] text-violet-200">{cmdMatch.name}</span>
+          </div>
         ) : isUser ? (
           <p className="whitespace-pre-wrap break-words">{msg.content}</p>
         ) : (
@@ -146,6 +202,35 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       </div>
     </div>
   )
+}, (prev, next) => {
+  const p = prev.msg, n = next.msg
+  return p.content === n.content
+    && p.streaming === n.streaming
+    && p.error === n.error
+    && p.toolCalls === n.toolCalls
+    && p.usage === n.usage
+    && p.compact === n.compact
+})
+
+// ─── Typing indicator ─────────────────────────────────────────────────────────
+
+function TypingIndicator() {
+  return (
+    <div className="flex gap-2.5 items-end">
+      <img src="/icon.svg" alt="Assistant" className="shrink-0 w-7 h-7 rounded-full object-cover border border-violet-400/20" />
+      <div className="rounded-2xl rounded-bl-sm bg-white/[0.05] border border-white/[0.06] px-4 py-3">
+        <div className="flex gap-1 items-center h-4">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="w-1.5 h-1.5 rounded-full bg-white/40 animate-bounce"
+              style={{ animationDelay: `${i * 150}ms` }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
@@ -156,49 +241,64 @@ export function ChatPanel() {
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
 
-  // Slash commands — static, no network call needed
+  // Slash commands
   const [paletteQuery, setPaletteQuery] = useState<string | null>(null)
   const [paletteSelectedIndex, setPaletteSelectedIndex] = useState(0)
   const [showModelPicker, setShowModelPicker] = useState(false)
 
   const handleSave = useCallback(
-    async (userMsg: string, assistantMsg: string, audioUrl?: string) => {
+    async (userMsg: string, assistantMsg: string, audioUrl?: string, imageUrl?: string) => {
       const session = activeSession ?? (await history.createSession(userMsg))
       if (!activeSession) setActiveSession(session)
       await history.saveMessages(session.id, [
-        { role: 'user', content: userMsg, audioUrl },
+        { role: 'user', content: userMsg, audioUrl, imageUrl },
         { role: 'assistant', content: assistantMsg },
       ])
     },
     [activeSession, history],
   )
 
-  const { messages, loading, sendMessage, loadMessages, clearMessages, appendMessage, stopStreaming, currentModel } = useChat({
+  const { messages, loading, sendMessage, loadMessages, clearMessages, appendMessage, stopStreaming, detachStream, currentModel } = useChat({
     sessionId: activeSession?.id,
     onSave: handleSave,
   })
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const hasAutoLoaded = useRef(false)
   const [input, setInput] = useState('')
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [pendingImages, setPendingImages] = useState<{ file: File; previewUrl: string }[]>([])
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const MAX_IMAGES = 10
 
-  // Auto-scroll to newest message
+  // Auto-scroll only when user is at the bottom (smart scroll)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (isAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages, loading])
 
-  // Track whether user is near the bottom of the messages list
+  // Track whether user is near the bottom
   const handleMessagesScroll = useCallback(() => {
     const el = messagesContainerRef.current
     if (!el) return
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    isAtBottomRef.current = atBottom
+    setShowScrollBtn(!atBottom)
+  }, [])
+
+  // Jump to bottom
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    isAtBottomRef.current = true
+    setShowScrollBtn(false)
   }, [])
 
   // When the container resizes (keyboard open/close), scroll to bottom if we were there.
-  // This fixes the scroll-position drift that leaves messages cut off after keyboard dismiss.
   useEffect(() => {
     const el = messagesContainerRef.current
     if (!el) return
@@ -209,17 +309,12 @@ export function ChatPanel() {
     return () => observer.disconnect()
   }, [])
 
-  // Auto-resize textarea
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
-  }, [input])
-
   const handleSelectSession = useCallback(
     async (session: ChatSession) => {
+      // If streaming in another session, detach it (let it continue in background)
+      detachStream()
       setActiveSession(session)
+      localStorage.setItem('mc_lastChatSessionId', session.id)
       setLoadingSession(true)
       try {
         const persisted = await history.loadMessages(session.id)
@@ -228,20 +323,22 @@ export function ChatPanel() {
         setLoadingSession(false)
       }
     },
-    [history, loadMessages],
+    [history, loadMessages, detachStream],
   )
 
-  // Auto-load most recent session on first mount
+  // Auto-load last viewed session (or most recent) on first mount
   useEffect(() => {
     if (hasAutoLoaded.current || history.loading || history.sessions.length === 0) return
     hasAutoLoaded.current = true
-    const mostRecent = history.sessions.reduce((a, b) =>
-      a.updated_at > b.updated_at ? a : b
-    )
-    handleSelectSession(mostRecent)
+    const lastId = localStorage.getItem('mc_lastChatSessionId')
+    const target = (lastId && history.sessions.find((s) => s.id === lastId))
+      || history.sessions.reduce((a, b) => a.updated_at > b.updated_at ? a : b)
+    handleSelectSession(target)
   }, [history.loading, history.sessions, handleSelectSession])
 
   const handleNewChat = useCallback(async () => {
+    // If streaming, detach it (let it continue in background)
+    detachStream()
     setActiveSession(null)
     clearMessages()
     try {
@@ -251,7 +348,7 @@ export function ChatPanel() {
         body: JSON.stringify({ action: 'newchat' }),
       })
     } catch { /* ignore */ }
-  }, [clearMessages])
+  }, [clearMessages, detachStream])
 
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
@@ -274,10 +371,59 @@ export function ChatPanel() {
     [history],
   )
 
-  const handleSend = (text?: string) => {
+  const attachImage = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return
+    if (file.size > 10 * 1024 * 1024) return // 10MB max
+    setPendingImages((prev) => {
+      if (prev.length >= MAX_IMAGES) return prev
+      const previewUrl = URL.createObjectURL(file)
+      return [...prev, { file, previewUrl }]
+    })
+    textareaRef.current?.focus()
+  }, [])
+
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    e.target.value = ''
+    for (const file of Array.from(files)) {
+      attachImage(file)
+    }
+  }, [attachImage])
+
+  // Paste images from clipboard (Cmd+V / Ctrl+V / mobile paste)
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) attachImage(file)
+        return
+      }
+    }
+  }, [attachImage])
+
+  const removePendingImage = useCallback((index: number) => {
+    setPendingImages((prev) => {
+      const removed = prev[index]
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
+  }, [])
+
+  const clearAllPendingImages = useCallback(() => {
+    setPendingImages((prev) => {
+      prev.forEach((img) => URL.revokeObjectURL(img.previewUrl))
+      return []
+    })
+  }, [])
+
+  const handleSend = async (text?: string) => {
     const msg = text ?? input
-    if (!msg.trim() || loading) return
-    // /clear is handled locally — no need to round-trip to agent
+    if ((!msg.trim() && pendingImages.length === 0) || loading) return
+    // /clear is handled locally
     if (msg.trim() === '/clear') {
       handleNewChat()
       setInput('')
@@ -293,7 +439,44 @@ export function ChatPanel() {
       setPaletteSelectedIndex(0)
       return
     }
-    sendMessage(msg)
+    isAtBottomRef.current = true
+    setShowScrollBtn(false)
+
+    // Upload all pending images to Supabase Storage
+    let imageUrl: string | undefined
+    if (pendingImages.length > 0) {
+      setUploadingImage(true)
+      const uploadedUrls: string[] = []
+      try {
+        const supabase = createClient()
+        for (const img of pendingImages) {
+          try {
+            const ext = img.file.name.split('.').pop() ?? 'png'
+            const fileName = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
+            const { data, error } = await supabase.storage
+              .from('generated-images')
+              .upload(fileName, img.file, { contentType: img.file.type, upsert: false })
+            if (error) throw error
+            const { data: urlData } = supabase.storage.from('generated-images').getPublicUrl(data.path)
+            uploadedUrls.push(urlData.publicUrl)
+          } catch {
+            // Skip failed uploads
+          }
+        }
+        // First URL is the "primary" image (sent to Agent Server for vision analysis)
+        // All URLs stored joined by newline in image_url field
+        if (uploadedUrls.length > 0) {
+          imageUrl = uploadedUrls.join('\n')
+        }
+      } finally {
+        pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl))
+        setPendingImages([])
+        setUploadingImage(false)
+      }
+    }
+
+    const defaultMsg = pendingImages.length > 1 ? `Analyze these ${pendingImages.length} images` : 'Analyze this image'
+    sendMessage(msg.trim() || defaultMsg, { imageUrl, chatSessionId: activeSession?.id })
     setInput('')
     setPaletteQuery(null)
     setPaletteSelectedIndex(0)
@@ -328,23 +511,33 @@ export function ChatPanel() {
         return
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    const isMobile = window.innerWidth < 768
+    if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  const handleInputChange = (val: string) => {
+  const handleInputChange = useCallback((val: string) => {
     setInput(val)
-    const match = val.match(/^\/([a-z]*)$/)
-    if (match) {
-      setPaletteQuery(match[1])
-      setPaletteSelectedIndex(0)
-    } else {
-      setPaletteQuery(null)
-      setPaletteSelectedIndex(0)
+    // Auto-resize inline
+    const el = textareaRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`
     }
-  }
+    // Palette updates are non-critical UI
+    startTransition(() => {
+      const match = val.match(/^\/([a-z]*)$/)
+      if (match) {
+        setPaletteQuery(match[1])
+        setPaletteSelectedIndex(0)
+      } else {
+        setPaletteQuery(null)
+        setPaletteSelectedIndex(0)
+      }
+    })
+  }, [])
 
   const handleCommandSelect = (cmdName: string) => {
     if (cmdName === '/model') {
@@ -354,19 +547,22 @@ export function ChatPanel() {
       setInput('')
       return
     }
-    setInput(cmdName + ' ')
+    // Send command immediately on click
     setPaletteQuery(null)
     setPaletteSelectedIndex(0)
-    textareaRef.current?.focus()
+    setInput('')
+    handleSend(cmdName)
   }
 
   const handleModelSelect = (modelValue: string) => {
     setShowModelPicker(false)
-    sendMessage(`/model ${modelValue}`)
+    sendMessage(`/model ${modelValue}`, { chatSessionId: activeSession?.id })
   }
 
   const handleVoiceNote = useCallback((transcription: string, audioUrl: string) => {
-    sendMessage(`[Nota de voz]: ${transcription}`, { audioUrl })
+    isAtBottomRef.current = true
+    setShowScrollBtn(false)
+    sendMessage(`[Voice note]: ${transcription}`, { audioUrl, chatSessionId: activeSession?.id })
   }, [sendMessage])
 
   // ESC to stop streaming
@@ -409,6 +605,7 @@ export function ChatPanel() {
             content: string
             created_at: string
             audio_url?: string | null
+            image_url?: string | null
             metadata?: { source?: string; jobId?: string; jobLabel?: string } | null
           }
           appendMessage({
@@ -417,6 +614,7 @@ export function ChatPanel() {
             content: row.content,
             timestamp: new Date(row.created_at),
             audioUrl: row.audio_url ?? undefined,
+            imageUrl: row.image_url ?? undefined,
             metadata: row.metadata ?? undefined,
           })
         },
@@ -425,6 +623,32 @@ export function ChatPanel() {
 
     return () => { supabase.removeChannel(channel) }
   }, [activeSession?.id, appendMessage])
+
+  // Memoize message list
+  const messagesList = useMemo(() => {
+    const items: React.ReactNode[] = []
+    let prevDate: string | null = null
+
+    for (const msg of messages) {
+      const msgDate = msg.timestamp.toDateString()
+      if (msgDate !== prevDate) {
+        items.push(<DateSeparator key={`date-${msgDate}`} date={msg.timestamp} />)
+        prevDate = msgDate
+      }
+      items.push(
+        <div key={msg.id}>
+          {msg.compact && (
+            <CompactSeparator
+              tokensBefore={msg.compact.tokensBefore}
+              tokensAfter={msg.compact.tokensAfter}
+            />
+          )}
+          <MessageBubble msg={msg} />
+        </div>
+      )
+    }
+    return items
+  }, [messages])
 
   return (
     <AudioProvider>
@@ -440,9 +664,9 @@ export function ChatPanel() {
       {/* Sessions sidebar */}
       <div className={`
         ${chatSessionsPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        ${chatSessionsPanelOpen ? 'md:w-44' : 'md:w-0 md:overflow-hidden'}
+        ${chatSessionsPanelOpen ? 'md:w-64' : 'md:w-0 md:overflow-hidden'}
         fixed md:relative z-20 md:z-0
-        w-44 h-full
+        w-64 h-full
         bg-[#0a0a0f] md:bg-transparent
         transition-all duration-300 ease-in-out
       `}>
@@ -460,7 +684,7 @@ export function ChatPanel() {
 
       {/* Chat area */}
       <div className="flex flex-col flex-1 min-w-0">
-        {/* Header — 3 zones: toggle | Assistant centered | new chat — desktop only */}
+        {/* Header -- desktop only */}
         <div className="shrink-0 relative hidden md:flex items-center px-4 py-3 border-b border-white/[0.06] z-10">
           {/* Left zone: toggle */}
           <button
@@ -471,10 +695,10 @@ export function ChatPanel() {
             <MessageSquare size={14} />
           </button>
 
-          {/* Center zone: Assistant avatar + name (absolutely centered) */}
+          {/* Center zone: Assistant avatar + name */}
           <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2.5 pointer-events-none select-none">
             <div className="relative">
-              <img src="/avatar.png" alt="Assistant" className="w-8 h-8 rounded-full object-cover border border-violet-400/30" />
+              <img src="/icon.svg" alt="Assistant" className="w-8 h-8 rounded-full object-cover border border-violet-400/30" />
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-[#0a0a0f]" />
             </div>
             <div>
@@ -497,51 +721,67 @@ export function ChatPanel() {
           </button>
         </div>
 
-        {/* Global audio bar — appears when audio is playing */}
+        {/* Global audio bar */}
         <GlobalAudioBar />
 
         {/* Messages */}
-        <div
-          ref={messagesContainerRef}
-          onScroll={handleMessagesScroll}
-          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-3"
-        >
-          {loadingSession ? (
-            <div className="flex flex-col gap-3">
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className={`h-10 rounded-2xl bg-white/[0.04] animate-pulse ${i % 2 === 0 ? 'ml-auto w-2/3' : 'w-3/4'}`}
-                />
-              ))}
-            </div>
-          ) : messages.length === 0 && !loading ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-              <img src="/avatar.png" alt="Assistant" className="w-12 h-12 rounded-2xl object-cover border border-violet-400/20" />
-              <div>
-                <p className="text-sm font-medium text-white/50">Hello</p>
-                <p className="text-xs text-white/25 mt-1">Send a message to get started</p>
-              </div>
-            </div>
-          ) : (
-            messages.map((msg) => (
-              <div key={msg.id}>
-                {msg.compact && (
-                  <CompactSeparator
-                    tokensBefore={msg.compact.tokensBefore}
-                    tokensAfter={msg.compact.tokensAfter}
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleMessagesScroll}
+            className="absolute inset-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-3"
+          >
+            {loadingSession ? (
+              <div className="flex flex-col gap-3">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className={`h-10 rounded-2xl bg-white/[0.04] animate-pulse ${i % 2 === 0 ? 'ml-auto w-2/3' : 'w-3/4'}`}
                   />
-                )}
-                <MessageBubble msg={msg} />
+                ))}
               </div>
-            ))
-          )}
+            ) : messages.length === 0 && !loading ? (
+              <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+                <img src="/icon.svg" alt="Assistant" className="w-12 h-12 rounded-2xl object-cover border border-violet-400/20" />
+                <div>
+                  <p className="text-sm font-medium text-white/50">Hello</p>
+                  <p className="text-xs text-white/25 mt-1">Send a message to get started</p>
+                </div>
+              </div>
+            ) : (
+              messagesList
+            )}
 
-          {/* Streaming indicator is now inline in the message bubble */}
-          <div ref={bottomRef} />
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Scroll-to-bottom button */}
+          {showScrollBtn && (
+            <button
+              onClick={scrollToBottom}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10
+                w-8 h-8 rounded-full flex items-center justify-center
+                bg-white/[0.1] border border-white/[0.12] text-white/50
+                hover:bg-violet-500/20 hover:border-violet-500/30 hover:text-white/80
+                active:scale-90 transition-all duration-200 shadow-lg shadow-black/30"
+              title="Scroll to bottom"
+            >
+              <ChevronDown size={16} />
+            </button>
+          )}
         </div>
 
-        {/* Input toolbar — glass bg extends through safe area like native iOS apps */}
+        {/* Hidden file input for image upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          multiple
+          onChange={handleImageSelect}
+          className="hidden"
+        />
+
+        {/* Input toolbar */}
         <div className="shrink-0 bg-white/[0.02] backdrop-blur-xl border-t border-white/[0.06]">
           <div className="px-4 pt-2.5 pb-0 md:pb-3">
             <div className="relative">
@@ -559,18 +799,61 @@ export function ChatPanel() {
                   onClose={() => setShowModelPicker(false)}
                 />
               )}
+
+              {/* Pending images preview */}
+              {pendingImages.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-start gap-2">
+                  {pendingImages.map((img, i) => (
+                    <div key={i} className="relative inline-block">
+                      <img
+                        src={img.previewUrl}
+                        alt={`Preview ${i + 1}`}
+                        className="h-16 w-16 rounded-xl border border-white/[0.1] object-cover"
+                      />
+                      <button
+                        onClick={() => removePendingImage(i)}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:bg-red-500/80 transition-colors"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ))}
+                  {pendingImages.length < MAX_IMAGES && (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-16 w-16 rounded-xl border border-dashed border-white/[0.15] flex items-center justify-center text-white/25 hover:text-white/50 hover:border-white/30 transition-colors"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  )}
+                  {uploadingImage && (
+                    <span className="text-[10px] text-violet-400 animate-pulse self-center">Uploading...</span>
+                  )}
+                </div>
+              )}
+
               <div className="flex items-end gap-2.5 bg-white/[0.04] border border-white/[0.08] rounded-[22px] px-4 py-2
                 focus-within:border-violet-500/25 focus-within:bg-white/[0.06]
                 transition-all duration-300">
+                {/* Image upload button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading || loadingSession || uploadingImage}
+                  title="Send image"
+                  className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white/25 hover:text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-30"
+                >
+                  <ImageIcon size={16} />
+                </button>
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Message..."
+                  onPaste={handlePaste}
+                  placeholder={pendingImages.length > 0 ? 'Add a message or send...' : 'Message...'}
                   rows={1}
                   disabled={loadingSession}
-                  className="flex-1 bg-transparent text-[15px] md:text-sm text-white/90 placeholder-white/20 resize-none outline-none min-h-[28px] max-h-[120px] leading-7 py-0 disabled:opacity-50"
+                  className="flex-1 bg-transparent text-[15px] md:text-sm text-white/90 placeholder-white/20 resize-none outline-none min-h-[28px] max-h-[120px] leading-snug py-1 disabled:opacity-50"
                 />
                 {loading ? (
                   <button
@@ -582,16 +865,12 @@ export function ChatPanel() {
                   >
                     <Square size={13} className="md:w-[11px] md:h-[11px]" />
                   </button>
-                ) : input.trim() ? (
+                ) : (input.trim() || pendingImages.length > 0) ? (
                   <button
                     onMouseDown={(e) => {
-                      // Prevent textarea blur so the click fires immediately on desktop too
                       e.preventDefault()
                     }}
                     onTouchEnd={(e) => {
-                      // On mobile Safari, tapping the send button while the keyboard is open
-                      // causes a blur/reflow that swallows the first tap. By handling onTouchEnd
-                      // and preventing default, we fire the send immediately on the first tap.
                       e.preventDefault()
                       handleSend()
                     }}

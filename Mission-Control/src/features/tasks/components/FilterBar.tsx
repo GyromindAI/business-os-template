@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useFiltersStore, type TaskFilters } from '@/shared/stores/filters-store'
 import { PRIORITY_CONFIG, STATUS_CONFIG } from '../utils/priority'
 import { Filter, X, Save, ChevronDown, Bookmark } from 'lucide-react'
-import type { TaskPriority, TaskStatus, Label, Agent } from '@/types/database'
+import type { TaskPriority, TaskStatus, Label, Profile } from '@/types/database'
 
 interface SavedView {
   id: string
@@ -18,7 +18,7 @@ interface SavedView {
 export function FilterBar() {
   const { filters, setFilter, resetFilters, hasActiveFilters } = useFiltersStore()
   const [labels, setLabels] = useState<Label[]>([])
-  const [agents, setAgents] = useState<Agent[]>([])
+  const [members, setMembers] = useState<Profile[]>([])
   const [savedViews, setSavedViews] = useState<SavedView[]>([])
   const [dataLoaded, setDataLoaded] = useState(false)
 
@@ -31,13 +31,13 @@ export function FilterBar() {
   const fetchData = useCallback(async () => {
     if (dataLoaded) return
     const supabase = createClient()
-    const [labelsRes, agentsRes, viewsRes] = await Promise.all([
+    const [labelsRes, profilesRes, viewsRes] = await Promise.all([
       supabase.from('labels').select('*').order('name'),
-      supabase.from('agents').select('*').order('name'),
+      supabase.from('profiles').select('*').order('full_name'),
       supabase.from('saved_views').select('*').order('name'),
     ])
     if (labelsRes.data) setLabels(labelsRes.data as Label[])
-    if (agentsRes.data) setAgents(agentsRes.data as Agent[])
+    if (profilesRes.data) setMembers(profilesRes.data as Profile[])
     if (viewsRes.data) setSavedViews(viewsRes.data as unknown as SavedView[])
     setDataLoaded(true)
   }, [dataLoaded])
@@ -99,8 +99,8 @@ export function FilterBar() {
     activePills.push({ key: 'priority', label: `${p.icon} ${p.label}` })
   }
   if (filters.assigneeId) {
-    const agent = agents.find((a) => a.id === filters.assigneeId)
-    activePills.push({ key: 'assigneeId', label: agent ? `${agent.avatar} ${agent.name}` : 'Agent' })
+    const member = members.find((m) => m.id === filters.assigneeId)
+    activePills.push({ key: 'assigneeId', label: member?.full_name ?? 'Member' })
   }
   if (filters.labelId) {
     const label = labels.find((l) => l.id === filters.labelId)
@@ -177,16 +177,20 @@ export function FilterBar() {
 
               {/* Assignee */}
               <div className="px-3 py-1.5 text-[9px] uppercase tracking-widest text-white/25 font-semibold">Assignee</div>
-              {agents.map((a) => (
+              {members.map((m) => (
                 <button
-                  key={a.id}
-                  onClick={() => { setFilter('assigneeId', filters.assigneeId === a.id ? null : a.id); setActiveDropdown(null) }}
+                  key={m.id}
+                  onClick={() => { setFilter('assigneeId', filters.assigneeId === m.id ? null : m.id); setActiveDropdown(null) }}
                   className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors
-                    ${filters.assigneeId === a.id ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:bg-white/[0.06]'}
+                    ${filters.assigneeId === m.id ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:bg-white/[0.06]'}
                   `}
                 >
-                  <span>{a.avatar}</span>
-                  {a.name}
+                  {m.avatar_url ? (
+                    <img src={m.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover" />
+                  ) : (
+                    <span className="w-4 h-4 rounded-full bg-white/[0.1] flex items-center justify-center text-[9px] text-white/60">{(m.full_name ?? '?')[0]}</span>
+                  )}
+                  {m.full_name ?? m.email ?? 'User'}
                 </button>
               ))}
 

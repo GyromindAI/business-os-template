@@ -15,17 +15,10 @@ export async function createClient() {
         setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, {
-                path: '/',
-                sameSite: 'lax' as const,
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 60 * 60 * 24 * 30,
-                ...options,
-              })
+              cookieStore.set(name, value, options)
             )
           } catch {
-            // Ignore en Server Components
+            // Ignore in Server Components
           }
         },
       },

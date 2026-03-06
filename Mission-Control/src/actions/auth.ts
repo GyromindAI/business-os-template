@@ -23,8 +23,11 @@ export async function login(formData: FormData) {
     return { error: error.message }
   }
 
+  const next = formData.get('next') as string | null
+  const redirectTo = next && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+
   revalidatePath('/', 'layout')
-  redirect('/')
+  redirect(redirectTo)
 }
 
 export async function signup(formData: FormData) {

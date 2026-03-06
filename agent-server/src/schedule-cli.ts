@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 /**
  * CLI for managing scheduled tasks in the Agent Server.
- * Uso: npx tsx src/schedule-cli.ts <command> [args]
+ * Usage: npx tsx src/schedule-cli.ts <command> [args]
  *
- * Comandos:
- *   list                          — Lista todas las tareas
- *   create <prompt> <cron> <chatId> [threadId]  — Crea una tarea
- *   delete <id>                   — Elimina una tarea
- *   pause <id>                    — Pausa una tarea
- *   resume <id>                   — Reactiva una tarea
- *   run <id>                      — Ejecuta una tarea ahora (one-shot)
+ * Commands:
+ *   list                          — List all tasks
+ *   create <prompt> <cron> <chatId> [threadId]  — Create a task
+ *   delete <id>                   — Delete a task
+ *   pause <id>                    — Pause a task
+ *   resume <id>                   — Resume a task
+ *   run <id>                      — Run a task immediately (one-shot)
  */
 
-import { initDatabase, listTasks, createTask, deleteTask, updateTaskStatus, getTask } from './db.js'
+import { initDatabase, listTasks, createTask, deleteTask, updateTaskStatus, getTask, updateTaskAfterRun } from './db.js'
 import { computeNextRun } from './scheduler.js'
 import { runAgent } from './agent.js'
+import { mcCronResult } from './mc-client.js'
 
 initDatabase()
 
@@ -84,7 +85,7 @@ switch (command) {
       process.exit(1)
     }
 
-    // Validar expresión cron
+    // Validate cron expression
     let nextRun: number
     try {
       nextRun = computeNextRun(schedule)
@@ -95,7 +96,7 @@ switch (command) {
 
     const threadId = threadIdStr ? parseInt(threadIdStr, 10) : null
 
-    // Generar ID desde el prompt (primeras palabras, slug)
+    // Generate ID from prompt (first words, slug)
     const slug = prompt
       .toLowerCase()
       .replace(/[^a-z0-9 ]/g, '')
@@ -198,9 +199,16 @@ switch (command) {
 
     try {
       const result = await runAgent(task.prompt)
+      const text = result.text?.trim() ?? ''
       console.log('\n── Result ──')
-      console.log(result.text ?? '(no output)')
+      console.log(text || '(no output)')
+
+      // Deliver to Mission Control (same as cron flow)
+      await mcCronResult(id, text || '(no output)')
+      const nextRun = computeNextRun(task.schedule)
+      updateTaskAfterRun(id, text || '(no output)', nextRun)
     } catch (err) {
+      await mcCronResult(id, '', String(err))
       console.error(`Error: ${String(err)}`)
       process.exit(1)
     }

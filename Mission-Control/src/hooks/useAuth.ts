@@ -15,39 +15,43 @@ export function useAuth() {
 
   useEffect(() => {
     const supabase = createClient()
-
-    async function getProfile(userId: string) {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
-
-      setProfile(data)
-    }
-
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user)
-      if (user) {
-        getProfile(user.id)
-      }
-      setLoading(false)
-    })
+    let mounted = true
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         const currentUser = session?.user ?? null
+        if (!mounted) return
         setUser(currentUser)
-        if (currentUser) {
-          getProfile(currentUser.id)
-        } else {
+
+        if (!currentUser) {
           setProfile(null)
+          setLoading(false)
+          return
         }
-        setLoading(false)
+
+        // Profile fetch runs in a setTimeout(0) to escape the navigator
+        // lock held by supabase auth during event emission. Without this,
+        // the Supabase client deadlocks trying to acquire the auth lock
+        // for the REST API call while it's still held by _initialize().
+        setTimeout(async () => {
+          if (!mounted) return
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', currentUser.id)
+            .single()
+          if (mounted) {
+            setProfile(data)
+            setLoading(false)
+          }
+        }, 0)
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   return { user, profile, loading, isOwner, role }

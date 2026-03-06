@@ -12,7 +12,7 @@ import { RouteGuard } from '@/shared/components/RouteGuard'
 import { ChatBubble } from '@/shared/components/ChatBubble'
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { leftSidebarOpen, closeLeftSidebar } = useLayoutStore()
+  const { leftSidebarOpen, closeLeftSidebar, drawFullscreen } = useLayoutStore()
   const [helpOpen, setHelpOpen] = useState(false)
   const pathname = usePathname()
 
@@ -22,6 +22,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       localStorage.setItem('mc_lastRoute', pathname)
     }
   }, [pathname])
+
+  // Auto-exit fullscreen when navigating away from Draw
+  useEffect(() => {
+    if (drawFullscreen && !pathname?.startsWith('/draw')) {
+      useLayoutStore.getState().exitDrawFullscreen()
+    }
+  }, [pathname, drawFullscreen])
 
   const handleCreateTask = useCallback(() => {
     window.dispatchEvent(new CustomEvent('openclaw:create-task'))
@@ -88,44 +95,50 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       }}
     >
       {/* Aurora orbs */}
-      <div className="fixed top-[-30%] left-[-15%] w-[50%] h-[50%] bg-purple-600/8 rounded-full blur-[150px] pointer-events-none" />
-      <div className="fixed bottom-[-30%] right-[-15%] w-[45%] h-[45%] bg-blue-600/6 rounded-full blur-[150px] pointer-events-none" />
+      {!drawFullscreen && (
+        <>
+          <div className="fixed top-[-30%] left-[-15%] w-[50%] h-[50%] bg-purple-600/8 rounded-full blur-[150px] pointer-events-none" />
+          <div className="fixed bottom-[-30%] right-[-15%] w-[45%] h-[45%] bg-blue-600/6 rounded-full blur-[150px] pointer-events-none" />
+        </>
+      )}
 
-      {/* Header */}
-      <Header />
+      {/* Header — hidden in fullscreen */}
+      {!drawFullscreen && <Header />}
 
       {/* Body */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Mobile overlay */}
-        {leftSidebarOpen && (
+        {leftSidebarOpen && !drawFullscreen && (
           <div
             className="fixed inset-0 bg-black/50 z-30 md:hidden"
             onClick={closeLeftSidebar}
           />
         )}
 
-        {/* Left Sidebar */}
-        <aside
-          className={`
-            ${leftSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-            fixed md:relative z-40 md:z-0
-            w-64 ${leftSidebarOpen ? 'md:w-60' : 'md:w-0'}
-            bg-white/[0.03] backdrop-blur-xl
-            border-r ${leftSidebarOpen ? 'border-white/[0.06]' : 'md:border-transparent'}
-            transition-all duration-300 ease-in-out
-            flex flex-col overflow-hidden shrink-0
-          `}
-          style={{ height: 'calc(var(--app-h, 100dvh) - 3.5rem - env(safe-area-inset-top, 0px))' }}
-        >
-          <button
-            onClick={closeLeftSidebar}
-            className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/[0.08] text-white/40 md:hidden z-10"
+        {/* Left Sidebar — hidden in fullscreen */}
+        {!drawFullscreen && (
+          <aside
+            className={`
+              ${leftSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+              fixed md:relative z-40 md:z-0
+              w-64 ${leftSidebarOpen ? 'md:w-60' : 'md:w-0'}
+              bg-white/[0.03] backdrop-blur-xl
+              border-r ${leftSidebarOpen ? 'border-white/[0.06]' : 'md:border-transparent'}
+              transition-all duration-300 ease-in-out
+              flex flex-col overflow-hidden shrink-0
+            `}
+            style={{ height: 'calc(var(--app-h, 100dvh) - 3.5rem - env(safe-area-inset-top, 0px))' }}
           >
-            <X size={16} />
-          </button>
+            <button
+              onClick={closeLeftSidebar}
+              className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/[0.08] text-white/40 md:hidden z-10"
+            >
+              <X size={16} />
+            </button>
 
-          <SidebarNav />
-        </aside>
+            <SidebarNav />
+          </aside>
+        )}
 
         {/* Main Content */}
         <main className="flex-1 overflow-hidden min-w-0">
@@ -133,8 +146,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
-      <SearchDialog />
-      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      {!drawFullscreen && (
+        <>
+          <SearchDialog />
+          <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+        </>
+      )}
       <ChatBubble />
     </div>
     </div>

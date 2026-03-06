@@ -24,6 +24,9 @@ import {
   Copy,
   Play,
   Loader2,
+  Eye,
+  EyeOff,
+  ClipboardCheck,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -33,6 +36,7 @@ import type {
   Label,
   Message,
   Agent,
+  Profile,
   Document as DocType,
   Task,
   TaskRelation,
@@ -63,10 +67,14 @@ export function TaskDetailPanel() {
   const [editTitle, setEditTitle] = useState('')
   const [isEditingDesc, setIsEditingDesc] = useState(false)
   const [editDesc, setEditDesc] = useState('')
+  const [descPreview, setDescPreview] = useState(true)
+  const [descCopied, setDescCopied] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
   const [priorityOpen, setPriorityOpen] = useState(false)
   const [estimateOpen, setEstimateOpen] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
+  const [assigneesOpen, setAssigneesOpen] = useState(false)
+  const [allProfiles, setAllProfiles] = useState<Profile[]>([])
   const [commentText, setCommentText] = useState('')
   const [commentAgent, setCommentAgent] = useState('')
   const [allAgents, setAllAgents] = useState<Agent[]>([])
@@ -121,6 +129,18 @@ export function TaskDetailPanel() {
     }
   }, [])
 
+  const fetchAllProfiles = useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('full_name')
+
+    if (data) {
+      setAllProfiles(data as Profile[])
+    }
+  }, [])
+
   const fetchAgents = useCallback(async () => {
     const supabase = createClient()
     const { data } = await supabase.from('agents').select('*').order('name')
@@ -162,6 +182,7 @@ export function TaskDetailPanel() {
     fetchMessages(selectedTaskId)
     fetchDocuments(selectedTaskId)
     fetchAllLabels()
+    fetchAllProfiles()
     fetchAgents()
     fetchSubtasks(selectedTaskId)
     fetchRelations(selectedTaskId)
@@ -186,7 +207,7 @@ export function TaskDetailPanel() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [selectedTaskId, fetchMessages, fetchDocuments, fetchAllLabels, fetchAgents, fetchSubtasks, fetchRelations])
+  }, [selectedTaskId, fetchMessages, fetchDocuments, fetchAllLabels, fetchAllProfiles, fetchAgents, fetchSubtasks, fetchRelations])
 
   useEffect(() => {
     setIsEditingTitle(false)
@@ -195,6 +216,7 @@ export function TaskDetailPanel() {
     setPriorityOpen(false)
     setEstimateOpen(false)
     setLabelsOpen(false)
+    setAssigneesOpen(false)
   }, [selectedTaskId])
 
   if (!task) return null
@@ -265,6 +287,24 @@ export function TaskDetailPanel() {
     } else {
       await supabase.from('task_labels').insert({ task_id: task.id, label_id: label.id })
       updateTask(task.id, { labels: [...currentLabels, label] })
+    }
+  }
+
+  const handleToggleAssignee = async (profile: Profile) => {
+    const supabase = createClient()
+    const currentAssignees = task.assignees ?? []
+    const isAssigned = currentAssignees.some((a) => a.id === profile.id)
+
+    if (isAssigned) {
+      await supabase
+        .from('task_assignees')
+        .delete()
+        .eq('task_id', task.id)
+        .eq('profile_id', profile.id)
+      updateTask(task.id, { assignees: currentAssignees.filter((a) => a.id !== profile.id) })
+    } else {
+      await supabase.from('task_assignees').insert({ task_id: task.id, profile_id: profile.id })
+      updateTask(task.id, { assignees: [...currentAssignees, profile] })
     }
   }
 
@@ -676,9 +716,33 @@ export function TaskDetailPanel() {
 
             {/* Description */}
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">
-                Description
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] uppercase tracking-widest text-white/40">
+                  Description
+                </label>
+                {task.description && !isEditingDesc && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setDescPreview(!descPreview)}
+                      className={`p-1 rounded transition-colors ${descPreview ? 'text-white/50 hover:text-white/70' : 'text-white/25 hover:text-white/40'}`}
+                      title={descPreview ? 'Show raw markdown' : 'Show preview'}
+                    >
+                      {descPreview ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(task.description || '')
+                        setDescCopied(true)
+                        setTimeout(() => setDescCopied(false), 2000)
+                      }}
+                      className="p-1 rounded text-white/25 hover:text-white/40 transition-colors"
+                      title="Copy as markdown"
+                    >
+                      {descCopied ? <ClipboardCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                    </button>
+                  </div>
+                )}
+              </div>
               {isEditingDesc ? (
                 <textarea
                   value={editDesc}
@@ -688,9 +752,19 @@ export function TaskDetailPanel() {
                     if (e.key === 'Escape') setIsEditingDesc(false)
                   }}
                   autoFocus
-                  rows={4}
-                  className="w-full bg-white/[0.06] border border-white/[0.12] rounded-lg px-3 py-2 text-sm text-white/80 outline-none focus:border-white/[0.2] resize-none"
+                  rows={8}
+                  className="w-full bg-white/[0.06] border border-white/[0.12] rounded-lg px-3 py-2 text-sm text-white/80 outline-none focus:border-white/[0.2] resize-y font-mono"
                 />
+              ) : descPreview && task.description ? (
+                <div
+                  onClick={() => {
+                    setEditDesc(task.description)
+                    setIsEditingDesc(true)
+                  }}
+                  className="text-sm text-white/60 cursor-text hover:bg-white/[0.04] rounded-lg px-2 py-1.5 -mx-1 transition-colors min-h-[3rem] md-preview"
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
+                </div>
               ) : (
                 <p
                   onClick={() => {
@@ -706,31 +780,67 @@ export function TaskDetailPanel() {
 
             {/* Assignees */}
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">
-                Assignees
-              </label>
-              {task.assignees.length > 0 ? (
-                <div className="space-y-1.5">
-                  {task.assignees.map((assignee) => (
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] uppercase tracking-widest text-white/40">
+                  Assignees
+                </label>
+                <button
+                  onClick={() => setAssigneesOpen(!assigneesOpen)}
+                  className="text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                >
+                  {assigneesOpen ? 'Close' : '+ Add'}
+                </button>
+              </div>
+              {task.assignees.length > 0 && (
+                <div className="space-y-1.5 mb-2">
+                  {task.assignees.map((profile) => (
                     <div
-                      key={assignee.id}
+                      key={profile.id}
                       className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.04]"
                     >
-                      {assignee.avatar_url
-                        ? <img src={assignee.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover" />
-                        : <span className="w-7 h-7 rounded-full bg-white/[0.08] flex items-center justify-center text-xs text-white/50">
-                            {(assignee.full_name ?? '?')[0]}
-                          </span>
-                      }
+                      {profile.avatar_url ? (
+                        <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-white/[0.1] flex items-center justify-center text-sm text-white/60">
+                          {(profile.full_name ?? '?')[0]}
+                        </div>
+                      )}
                       <div className="min-w-0">
-                        <span className="text-sm text-white truncate block">{assignee.full_name ?? 'Unknown'}</span>
-                        <span className="text-[11px] text-white/40">{assignee.role}</span>
+                        <span className="text-sm text-white truncate block">{profile.full_name ?? 'User'}</span>
+                        <span className="text-[11px] text-white/40">{profile.email}</span>
                       </div>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-sm text-white/30 italic px-1">No assignees</p>
+              )}
+              {assigneesOpen && (
+                <div className="bg-[#15151f] border border-white/[0.1] rounded-lg overflow-hidden shadow-xl shadow-black/40">
+                  {allProfiles.map((profile) => {
+                    const isActive = task.assignees.some((a) => a.id === profile.id)
+                    return (
+                      <button
+                        key={profile.id}
+                        onClick={() => handleToggleAssignee(profile)}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors
+                          ${isActive ? 'bg-white/[0.08]' : 'hover:bg-white/[0.06]'}
+                        `}
+                      >
+                        {profile.avatar_url ? (
+                          <img src={profile.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-white/[0.1] flex items-center justify-center text-[10px] text-white/60 flex-shrink-0">
+                            {(profile.full_name ?? '?')[0]}
+                          </div>
+                        )}
+                        <span className="text-white/70">{profile.full_name ?? profile.email ?? 'User'}</span>
+                        {isActive && <CheckCircle2 size={12} className="ml-auto text-emerald-400" />}
+                      </button>
+                    )
+                  })}
+                  {allProfiles.length === 0 && (
+                    <p className="text-xs text-white/30 px-3 py-2">No profiles found</p>
+                  )}
+                </div>
               )}
             </div>
 

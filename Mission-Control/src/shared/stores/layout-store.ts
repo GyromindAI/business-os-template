@@ -1,12 +1,14 @@
 import { create } from 'zustand'
 
-export type ViewType = 'kanban' | 'list' | 'activity' | 'calendar'
+export type ViewType = 'kanban' | 'list' | 'ops' | 'calendar'
 
 interface LayoutState {
   leftSidebarOpen: boolean
   rightSidebarOpen: boolean
   selectedView: ViewType
   chatSessionsPanelOpen: boolean
+  drawSidebarOpen: boolean
+  drawFullscreen: boolean
   toggleLeftSidebar: () => void
   toggleRightSidebar: () => void
   setSelectedView: (view: ViewType) => void
@@ -14,6 +16,10 @@ interface LayoutState {
   closeRightSidebar: () => void
   toggleChatSessionsPanel: () => void
   closeChatSessionsPanel: () => void
+  toggleDrawSidebar: () => void
+  closeDrawSidebar: () => void
+  toggleDrawFullscreen: () => void
+  exitDrawFullscreen: () => void
 }
 
 export const useLayoutStore = create<LayoutState>((set) => ({
@@ -21,6 +27,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   rightSidebarOpen: false,
   selectedView: 'kanban',
   chatSessionsPanelOpen: false,
+  drawSidebarOpen: true,
+  drawFullscreen: false,
   toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
   toggleRightSidebar: () => set((s) => ({ rightSidebarOpen: !s.rightSidebarOpen })),
   setSelectedView: (view) => set({ selectedView: view }),
@@ -28,4 +36,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   closeRightSidebar: () => set({ rightSidebarOpen: false }),
   toggleChatSessionsPanel: () => set((s) => ({ chatSessionsPanelOpen: !s.chatSessionsPanelOpen })),
   closeChatSessionsPanel: () => set({ chatSessionsPanelOpen: false }),
+  toggleDrawSidebar: () => set((s) => ({ drawSidebarOpen: !s.drawSidebarOpen })),
+  closeDrawSidebar: () => set({ drawSidebarOpen: false }),
+  toggleDrawFullscreen: () => set((s) => ({ drawFullscreen: !s.drawFullscreen })),
+  exitDrawFullscreen: () => set({ drawFullscreen: false }),
 }))

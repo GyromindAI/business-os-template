@@ -113,8 +113,8 @@ function WeekView({
   const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
   const days = eachDayOfInterval({ start: weekStart, end: weekEnd })
 
-  // Hours to display (7am to 10pm)
-  const hours = Array.from({ length: 16 }, (_, i) => i + 7)
+  // Hours to display (5am to 11pm)
+  const hours = Array.from({ length: 19 }, (_, i) => i + 5)
 
   return (
     <div className="flex-1 overflow-auto">

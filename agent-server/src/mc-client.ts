@@ -11,6 +11,7 @@ const MC_URL = _env['MISSION_CONTROL_URL'] ?? ''
 const MC_TOKEN = _env['MISSION_CONTROL_TOKEN'] ?? ''
 
 async function postEvent(payload: Record<string, unknown>): Promise<void> {
+  if (!MC_TOKEN) return // No token configured — skip silently
   try {
     await fetch(MC_URL, {
       method: 'POST',
@@ -57,15 +58,16 @@ export function mcError(runId: string, error: string): void {
   })
 }
 
-export function mcCronResult(jobId: string, output: string, error?: string): void {
-  void postEvent({
+export function mcCronResult(jobId: string, output: string, error?: string): Promise<void> {
+  const payload: Record<string, unknown> = {
     action: 'end',
     runId: `cron-${jobId}-${Date.now()}`,
     agentId: 'assistant',
     prompt: jobId,
     response: output,
     source: 'cron',
-    error: error ?? null,
     timestamp: new Date().toISOString(),
-  })
+  }
+  if (error) payload.error = error
+  return postEvent(payload)
 }

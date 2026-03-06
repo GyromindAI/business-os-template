@@ -2,18 +2,6 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isEmailAllowed } from '@/lib/auth-config'
 
-type CookieOptions = {
-  maxAge?: number
-  expires?: Date
-  path?: string
-  domain?: string
-  secure?: boolean
-  httpOnly?: boolean
-  sameSite?: 'strict' | 'lax' | 'none'
-}
-
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
-
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -25,20 +13,13 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, {
-              path: '/',
-              sameSite: 'lax',
-              httpOnly: true,
-              secure: process.env.NODE_ENV === 'production',
-              maxAge: SESSION_MAX_AGE,
-              ...options,
-            })
+            supabaseResponse.cookies.set(name, value, options)
           )
         },
       },
@@ -61,9 +42,14 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Not authenticated → login
+  // Not authenticated → login (preserve return URL)
   if (!isPublicRoute && !user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    const loginUrl = new URL('/login', request.url)
+    const returnTo = request.nextUrl.pathname
+    if (returnTo && returnTo !== '/') {
+      loginUrl.searchParams.set('next', returnTo)
+    }
+    return NextResponse.redirect(loginUrl)
   }
 
   // Authenticated but email not whitelisted → sign out and block

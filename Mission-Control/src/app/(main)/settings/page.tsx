@@ -8,13 +8,9 @@ import {
   Tag,
   Plus,
   Trash2,
-  Webhook,
-  CheckCircle,
   XCircle,
   Save,
   Palette,
-  Users,
-  Zap,
   AlertTriangle,
   Bell,
   BellOff,
@@ -25,8 +21,10 @@ import {
   CalendarDays,
   Loader2,
   UserCircle,
+  MessageSquare,
+  MessageSquareOff,
 } from 'lucide-react'
-import type { Label, Agent } from '@/types/database'
+import type { Label } from '@/types/database'
 import { usePushSubscription } from '@/features/notifications/hooks/usePushSubscription'
 
 const PRESET_COLORS = [
@@ -38,11 +36,9 @@ function SettingsContent() {
   const { isOwner, profile } = useAuth()
   const searchParams = useSearchParams()
   const labelsRef = useRef<HTMLElement>(null)
-  const apiRef = useRef<HTMLElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const { status: pushStatus, loading: pushLoading, subscribe, unsubscribe } = usePushSubscription()
   const [labels, setLabels] = useState<Label[]>([])
-  const [agents, setAgents] = useState<Agent[]>([])
   const [newLabelName, setNewLabelName] = useState('')
   const [newLabelColor, setNewLabelColor] = useState(PRESET_COLORS[0])
 
@@ -98,48 +94,17 @@ function SettingsContent() {
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const [editLabelName, setEditLabelName] = useState('')
   const [editLabelColor, setEditLabelColor] = useState('')
-  const [webhookStatus, setWebhookStatus] = useState<'checking' | 'connected' | 'error'>('checking')
-  const [webhookLastEvent, setWebhookLastEvent] = useState<string | null>(null)
+  const [isMobilePwa, setIsMobilePwa] = useState(false)
+  const [chatBubbleHidden, setChatBubbleHidden] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('mc_chatBubbleHidden') === 'true'
+  })
   const [saving, setSaving] = useState(false)
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [labelsRes, agentsRes, activityRes] = await Promise.all([
-      supabase.from('labels').select('*').order('name'),
-      supabase.from('agents').select('*').order('name'),
-      supabase
-        .from('activities')
-        .select('created_at')
-        .order('created_at', { ascending: false })
-        .limit(1),
-    ])
-
+    const labelsRes = await supabase.from('labels').select('*').order('name')
     if (labelsRes.data) setLabels(labelsRes.data as Label[])
-    if (agentsRes.data) setAgents(agentsRes.data as Agent[])
-
-    if (activityRes.data && activityRes.data.length > 0) {
-      const lastActivity = activityRes.data[0]
-      if (lastActivity.created_at) {
-        const lastTime = new Date(lastActivity.created_at)
-        const minutesAgo = Math.floor((Date.now() - lastTime.getTime()) / 60000)
-        if (minutesAgo < 60) {
-          setWebhookStatus('connected')
-          setWebhookLastEvent(`${minutesAgo}m ago`)
-        } else {
-          const hoursAgo = Math.floor(minutesAgo / 60)
-          if (hoursAgo < 24) {
-            setWebhookStatus('connected')
-            setWebhookLastEvent(`${hoursAgo}h ago`)
-          } else {
-            setWebhookStatus('error')
-            setWebhookLastEvent(`${Math.floor(hoursAgo / 24)}d ago`)
-          }
-        }
-      }
-    } else {
-      setWebhookStatus('error')
-      setWebhookLastEvent('No events received')
-    }
   }, [])
 
   useEffect(() => {
@@ -147,9 +112,15 @@ function SettingsContent() {
   }, [fetchData])
 
   useEffect(() => {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as unknown as { standalone?: boolean }).standalone === true
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    setIsMobilePwa(isStandalone && isMobile)
+  }, [])
+
+  useEffect(() => {
     const section = searchParams.get('section')
     if (section === 'labels') labelsRef.current?.scrollIntoView({ behavior: 'smooth' })
-    if (section === 'api') apiRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [searchParams, isOwner])
 
   const handleCreateLabel = async () => {
@@ -201,61 +172,91 @@ function SettingsContent() {
     <div className="max-w-3xl mx-auto p-6 space-y-8 pb-24">
       <div>
         <h1 className="text-xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-white/40 mt-1">Manage labels, monitor webhooks, and view agent configuration.</p>
+        <p className="text-sm text-white/40 mt-1">Manage your profile, labels, and notifications.</p>
       </div>
 
-      {/* Webhook Status */}
+      {/* Profile */}
       <section className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
-        <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
         <div className="px-5 py-4 border-b border-white/[0.06]">
           <div className="flex items-center gap-2">
-            <Webhook size={16} className="text-white/50" />
-            <h2 className="text-sm font-semibold text-white/80">Webhook Status</h2>
+            <UserCircle size={16} className="text-white/50" />
+            <h2 className="text-sm font-semibold text-white/80">Profile</h2>
           </div>
-          <p className="text-xs text-white/30 mt-1">Agent event pipeline</p>
+          <p className="text-xs text-white/30 mt-1">Your display name, avatar, and account info</p>
         </div>
-        <div className="p-5">
-          <div className="flex items-center gap-3">
-            {webhookStatus === 'checking' && (
-              <div className="w-3 h-3 rounded-full bg-yellow-400/50 animate-pulse" />
-            )}
-            {webhookStatus === 'connected' && (
-              <CheckCircle size={16} className="text-emerald-400" />
-            )}
-            {webhookStatus === 'error' && (
-              <XCircle size={16} className="text-red-400" />
-            )}
-            <div>
-              <p className="text-sm text-white/70">
-                {webhookStatus === 'checking' && 'Checking connection...'}
-                {webhookStatus === 'connected' && 'Connected — Events flowing'}
-                {webhookStatus === 'error' && 'No recent events detected'}
-              </p>
-              {webhookLastEvent && (
-                <p className="text-xs text-white/30 mt-0.5">
-                  Last event: {webhookLastEvent}
-                </p>
+        <div className="p-5 space-y-5">
+          {profileMsg && (
+            <div className={`text-xs px-3 py-2 rounded-lg ${profileMsg.type === 'success' ? 'bg-emerald-400/10 text-emerald-400' : 'bg-red-400/10 text-red-400'}`}>
+              {profileMsg.text}
+            </div>
+          )}
+
+          {/* Avatar + Name row */}
+          <div className="flex items-start gap-5">
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="relative group flex-shrink-0"
+              disabled={avatarUploading}
+            >
+              {avatarSrc ? (
+                <img src={avatarSrc} alt="Avatar" className="w-20 h-20 rounded-full object-cover border-2 border-white/[0.08]" />
+              ) : (
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-white text-xl font-bold border-2 border-white/[0.08]">
+                  {initials}
+                </div>
               )}
+              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {avatarUploading ? <Loader2 size={18} className="animate-spin text-white/70" /> : <Camera size={18} className="text-white/70" />}
+              </div>
+            </button>
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarChange} className="hidden" />
+
+            <div className="flex-1 space-y-2">
+              <label className="text-xs font-medium text-white/50">Display Name</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={profileName}
+                  onChange={e => setProfileName(e.target.value)}
+                  placeholder="Your name"
+                  className="flex-1 bg-white/[0.06] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm text-white/90 placeholder:text-white/20 focus:outline-none focus:border-violet-500/50"
+                />
+                <button
+                  onClick={handleSaveProfileName}
+                  disabled={profileSaving || profileName === (profile?.full_name ?? '')}
+                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-xs font-medium text-white transition-colors"
+                >
+                  {profileSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
             </div>
           </div>
-          <div className="mt-4 bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
-            <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">Endpoint</p>
-            <code className="text-xs text-white/50 font-mono break-all">
-              /api/openclaw/event
-            </code>
-            <p className="text-[10px] uppercase tracking-widest text-white/25 mt-3 mb-1">Events Handled</p>
-            <div className="flex flex-wrap gap-1.5">
-              {['lifecycle:start', 'lifecycle:end', 'lifecycle:error', 'tool:start', 'document'].map((evt) => (
-                <span key={evt} className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/40 border border-white/[0.08]">
-                  {evt}
-                </span>
-              ))}
+
+          {/* Account info */}
+          <div className="flex flex-wrap gap-x-8 gap-y-3 pt-2 border-t border-white/[0.06]">
+            <div className="flex items-center gap-2">
+              <Mail size={14} className="text-white/30" />
+              <span className="text-xs text-white/50">{profile?.email ?? '---'}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Shield size={14} className="text-white/30" />
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                profile?.role === 'owner' ? 'bg-violet-500/20 text-violet-400' : 'bg-blue-500/20 text-blue-400'
+              }`}>
+                {profile?.role === 'owner' ? 'Owner' : 'Member'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <CalendarDays size={14} className="text-white/30" />
+              <span className="text-xs text-white/50">
+                Since {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '---'}
+              </span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Labels Management — Owner only */}
+      {/* Labels Management -- Owner only */}
       {isOwner && (
       <section ref={labelsRef} className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-white/[0.06]">
@@ -379,81 +380,8 @@ function SettingsContent() {
       </section>
       )}
 
-      {/* Agent Configuration Overview */}
-      <section className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/[0.06]">
-          <div className="flex items-center gap-2">
-            <Users size={16} className="text-white/50" />
-            <h2 className="text-sm font-semibold text-white/80">Agent Configuration</h2>
-          </div>
-          <p className="text-xs text-white/30 mt-1">Overview of registered agents and their personalities</p>
-        </div>
-        <div className="p-5 space-y-3">
-          {agents.map((agent) => (
-            <div key={agent.id} className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <span className="text-3xl">{agent.avatar}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-sm font-semibold text-white">{agent.name}</h3>
-                    <span className={`text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded border ${
-                      agent.level === 'LEAD' ? 'text-purple-300 bg-purple-400/10 border-purple-400/20' :
-                      agent.level === 'INT' ? 'text-blue-300 bg-blue-400/10 border-blue-400/20' :
-                      'text-white/50 bg-white/[0.06] border-white/[0.1]'
-                    }`}>{agent.level}</span>
-                    <span className={`flex items-center gap-1 text-[10px] ${
-                      agent.status === 'active' ? 'text-emerald-400' :
-                      agent.status === 'blocked' ? 'text-red-400' :
-                      'text-white/30'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        agent.status === 'active' ? 'bg-emerald-400' :
-                        agent.status === 'blocked' ? 'bg-red-400' :
-                        'bg-white/30'
-                      }`} />
-                      {agent.status}
-                    </span>
-                  </div>
-                  <p className="text-xs text-white/40 mb-2">{agent.role}</p>
-
-                  {/* Personality fields */}
-                  <div className="space-y-2">
-                    {agent.system_prompt && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-widest text-white/25 mb-0.5">System Prompt</p>
-                        <p className="text-xs text-white/50 line-clamp-2">{agent.system_prompt}</p>
-                      </div>
-                    )}
-                    {agent.character && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-widest text-white/25 mb-0.5">Character</p>
-                        <p className="text-xs text-white/50 line-clamp-2">{agent.character}</p>
-                      </div>
-                    )}
-                    {agent.lore && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-widest text-white/25 mb-0.5">Lore</p>
-                        <p className="text-xs text-white/50 line-clamp-2">{agent.lore}</p>
-                      </div>
-                    )}
-                    {!agent.system_prompt && !agent.character && !agent.lore && (
-                      <div className="flex items-center gap-1.5 text-xs text-yellow-400/60">
-                        <AlertTriangle size={12} />
-                        <span>No personality configured — edit agent to add system prompt, character, and lore</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-          {agents.length === 0 && (
-            <p className="text-xs text-white/20 text-center py-4">No agents registered</p>
-          )}
-        </div>
-      </section>
-
-      {/* Push Notifications */}
+      {/* Push Notifications -- mobile PWA only */}
+      {isMobilePwa && (
       <section className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-white/[0.06]">
           <div className="flex items-center gap-2">
@@ -473,7 +401,7 @@ function SettingsContent() {
           {pushStatus === 'denied' && (
             <div className="flex items-center gap-2 text-xs text-yellow-400/70">
               <AlertTriangle size={14} />
-              <span>Notifications blocked — enable them in your browser settings</span>
+              <span>Notifications blocked -- enable them in your browser settings</span>
             </div>
           )}
 
@@ -525,47 +453,56 @@ function SettingsContent() {
           )}
         </div>
       </section>
+      )}
 
-      {/* Agent Action API — Owner only */}
-      {isOwner && (
-      <section ref={apiRef} className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
+      {/* Chat Bubble Toggle */}
+      <section className="bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-white/[0.06]">
           <div className="flex items-center gap-2">
-            <Zap size={16} className="text-white/50" />
-            <h2 className="text-sm font-semibold text-white/80">Agent Action API</h2>
+            <MessageSquare size={16} className="text-white/50" />
+            <h2 className="text-sm font-semibold text-white/80">Chat Bubble</h2>
           </div>
-          <p className="text-xs text-white/30 mt-1">Endpoints available for agent operations</p>
+          <p className="text-xs text-white/30 mt-1">The floating assistant chat on the bottom-right corner</p>
         </div>
-        <div className="p-5 space-y-3">
-          <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
-            <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">Actions Available</p>
-            <div className="space-y-1.5">
-              {[
-                { action: 'create_task', desc: 'Create a new task with optional assignment' },
-                { action: 'update_task', desc: 'Update task status, title, or description' },
-                { action: 'query_tasks', desc: 'Query tasks by status with pagination' },
-                { action: 'log_activity', desc: 'Log an activity entry for an agent' },
-                { action: 'update_agent', desc: 'Update agent status (idle/active/blocked)' },
-                { action: 'query_agents', desc: 'List all registered agents' },
-              ].map((item) => (
-                <div key={item.action} className="flex items-start gap-2">
-                  <code className="text-[10px] text-purple-300/80 bg-purple-500/10 px-1.5 py-0.5 rounded font-mono flex-shrink-0">
-                    {item.action}
-                  </code>
-                  <span className="text-[11px] text-white/40">{item.desc}</span>
-                </div>
-              ))}
+        <div className="p-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                !chatBubbleHidden ? 'bg-violet-500/20 text-violet-400' : 'bg-white/[0.06] text-white/30'
+              }`}>
+                {!chatBubbleHidden ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />}
+              </div>
+              <div>
+                <p className="text-sm text-white/70">
+                  {!chatBubbleHidden ? 'Chat bubble visible' : 'Chat bubble hidden'}
+                </p>
+                <p className="text-xs text-white/30 mt-0.5">
+                  {!chatBubbleHidden
+                    ? 'Assistant appears on every page'
+                    : 'Use the /chat page to talk to the assistant'}
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
-            <p className="text-[10px] uppercase tracking-widest text-white/25 mb-1">Authentication</p>
-            <p className="text-xs text-white/40">
-              Bearer token via <code className="text-[10px] bg-white/[0.06] px-1 py-0.5 rounded">OPENCLAW_GATEWAY_TOKEN</code>
-            </p>
+            <button
+              onClick={() => {
+                const next = !chatBubbleHidden
+                setChatBubbleHidden(next)
+                localStorage.setItem('mc_chatBubbleHidden', String(next))
+                window.dispatchEvent(new Event('mc:chatBubbleToggle'))
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                ${!chatBubbleHidden
+                  ? 'bg-white/[0.06] text-white/50 border border-white/[0.1] hover:bg-red-400/[0.08] hover:text-red-400/70 hover:border-red-400/20'
+                  : 'bg-violet-500/90 hover:bg-violet-500 text-white'
+                }`}
+            >
+              {!chatBubbleHidden ? <MessageSquareOff size={12} /> : <MessageSquare size={12} />}
+              {!chatBubbleHidden ? 'Hide' : 'Show'}
+            </button>
           </div>
         </div>
       </section>
-      )}
+
     </div>
     </div>
   )

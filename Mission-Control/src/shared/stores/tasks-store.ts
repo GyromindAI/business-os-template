@@ -29,7 +29,10 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   showArchived: false,
   focusedTaskId: null,
   setTasks: (tasks) => set({ tasks }),
-  addTask: (task) => set((s) => ({ tasks: [...s.tasks, task] })),
+  addTask: (task) => set((s) => {
+    if (s.tasks.some((t) => t.id === task.id)) return s
+    return { tasks: [...s.tasks, task] }
+  }),
   updateTask: (id, updates) =>
     set((s) => ({
       tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)),

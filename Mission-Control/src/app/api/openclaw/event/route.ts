@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import webpush from 'web-push'
+import { remark } from 'remark'
+import strip from 'strip-markdown'
 import { createServiceClient } from '@/lib/supabase/service'
 import { openClawEventSchema, CODING_TOOLS } from '@/types/openclaw'
 import type { OpenClawEvent } from '@/types/openclaw'
@@ -349,7 +351,7 @@ async function handleError(
   // Update task to review
   await supabase
     .from('tasks')
-    .update({ status: 'done' })
+    .update({ status: 'todo' })
     .eq('id', task.id)
 
   // Update agent to blocked
@@ -505,13 +507,13 @@ const CRON_JOB_LABELS: Record<string, string> = {
   'workspace-backup': 'Workspace Backup',
 }
 
-async function getOrCreateAutomatizacionesSession(
+async function getOrCreateAutomationsSession(
   supabase: ReturnType<typeof createServiceClient>,
 ): Promise<string> {
   const { data: existing } = await supabase
     .from('chat_sessions')
     .select('id')
-    .eq('title', 'Automatizaciones')
+    .eq('title', 'Automations')
     .eq('is_favorite', true)
     .limit(1)
     .single()
@@ -520,11 +522,11 @@ async function getOrCreateAutomatizacionesSession(
 
   const { data: created, error } = await supabase
     .from('chat_sessions')
-    .insert({ title: 'Automatizaciones', is_favorite: true })
+    .insert({ title: 'Automations', is_favorite: true })
     .select('id')
     .single()
 
-  if (error || !created) throw new Error('Failed to create Automatizaciones session')
+  if (error || !created) throw new Error('Failed to create Automations session')
   return created.id
 }
 
@@ -556,7 +558,7 @@ async function handleCronEvent(
   const output = event.response?.trim() ?? ''
   if (output && output !== '(no output)') {
     try {
-      const sessionId = await getOrCreateAutomatizacionesSession(supabase)
+      const sessionId = await getOrCreateAutomationsSession(supabase)
       const jobId = event.prompt ?? 'cron'
       await supabase.from('chat_messages').insert({
         session_id: sessionId,
@@ -584,16 +586,30 @@ async function handleCronEvent(
 let vapidReady = false
 function ensureVapid() {
   if (vapidReady) return
-  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-  const privateKey = process.env.VAPID_PRIVATE_KEY
+  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim()
+  const privateKey = process.env.VAPID_PRIVATE_KEY?.trim()
   if (!publicKey || !privateKey) return
   webpush.setVapidDetails(
-    `mailto:${process.env.VAPID_EMAIL ?? 'admin@example.com'}`,
+    `mailto:${(process.env.VAPID_EMAIL ?? 'admin@example.com').trim()}`,
     publicKey,
     privateKey,
   )
   vapidReady = true
 }
+
+/** Strip markdown to plain text using remark + strip-markdown (handles all GFM) */
+async function stripMd(md: string): Promise<string> {
+  const file = await remark().use(strip).process(md)
+  return String(file).replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Cron jobs that should NEVER send push notifications regardless of output. */
+const SILENT_CRON_JOBS = new Set([
+  'gmail-cleanup',
+  'metrics-snapshot',
+  'funnel-watchdog',
+  'workspace-backup',
+])
 
 async function sendCronPush(
   supabase: ReturnType<typeof createServiceClient>,
@@ -602,16 +618,31 @@ async function sendCronPush(
   isError: boolean,
 ): Promise<void> {
   try {
+    // Silent jobs never push (unless they error)
+    if (SILENT_CRON_JOBS.has(jobId) && !isError) return
+
     ensureVapid()
     if (!vapidReady) return
 
-    const { data: subs } = await supabase.from('push_subscriptions').select('*')
+    // Only send to the owner — fetch owner profile ids then filter subscriptions
+    const { data: owners } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'owner')
+    const ownerIds = owners?.map((o) => o.id) ?? []
+    if (ownerIds.length === 0) return
+
+    const { data: subs } = await supabase
+      .from('push_subscriptions')
+      .select('*')
+      .in('user_id', ownerIds)
     if (!subs?.length) return
 
     const title = isError
       ? `${CRON_JOB_LABELS[jobId] ?? jobId} — Error`
       : CRON_JOB_LABELS[jobId] ?? jobId
-    const body = output.length > 200 ? output.slice(0, 200) + '...' : output
+    const plain = await stripMd(output)
+    const body = plain.length > 200 ? plain.slice(0, 200) + '...' : plain
 
     const payload = JSON.stringify({
       title,

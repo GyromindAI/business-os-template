@@ -32,8 +32,12 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         message: message.trim(),
         ...(typeof body['effort'] === 'string' && { effort: body['effort'] }),
+        ...(typeof body['chatSessionId'] === 'string' && { chatSessionId: body['chatSessionId'] }),
+        ...(typeof body['audioUrl'] === 'string' && { audioUrl: body['audioUrl'] }),
+        ...(typeof body['imageUrl'] === 'string' && { imageUrl: body['imageUrl'] }),
+        ...(typeof body['context'] === 'string' && { context: body['context'] }),
       }),
-      signal: AbortSignal.timeout(600_000),
+      signal: request.signal,
     })
 
     if (!upstream.ok || !upstream.body) {
@@ -50,6 +54,10 @@ export async function POST(request: Request) {
       },
     })
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      // Browser disconnected - expected for background processing
+      return new Response(null, { status: 499 })
+    }
     if (err instanceof Error && err.name === 'TimeoutError') {
       return new Response(JSON.stringify({ error: 'Agent timeout' }), { status: 504 })
     }

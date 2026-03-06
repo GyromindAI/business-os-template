@@ -143,7 +143,7 @@ Create the database tables by running the SQL from `docs/SETUP_PROMPT.md` (Secti
 
 ## Customization
 
-**Personalize your AI:** Edit `CLAUDE.md` in the root directory. This is the system prompt for your AI assistant across all components.
+**Personalize your AI:** Edit `CLAUDE.md` in the root directory. This is the system prompt for your AI assistant across all components. Includes sections for golden rules, historical errors, and credentials.
 
 **Add cron jobs:**
 ```bash
@@ -152,11 +152,32 @@ npx tsx src/schedule-cli.ts create "Your daily briefing prompt" "0 9 * * *" YOUR
 npx tsx src/schedule-cli.ts list
 ```
 
-**Add Claude Code skills:** Place them in `~/.claude/skills/` and they're automatically available to your Agent Server.
+**Add Claude Code skills:** Place them in `.claude/skills/` and they're automatically available. Bundled skills include:
+
+| Skill | What it does |
+|-------|-------------|
+| `skill-creator` | Anthropic's official framework for creating, testing, and iterating on new skills |
+| `excalidraw-diagram` | Generate Excalidraw diagrams as JSON and render to PNG |
+| `google-workspace` | Gmail + Calendar management via gog CLI |
+| `supabase-mission-control` | Direct Supabase database operations for Mission Control |
+| `image-generation` | AI image generation with OpenRouter/Gemini, with Draw canvas injection |
+
+**PRP system:** Use `.claude/PRPs/prp-base.md` as a template for Product Requirements Proposals -- structured feature blueprints that define WHAT to build before writing code.
+
+**Development methodology:** See `.claude/prompts/bucle-agentico-blueprint.md` for the Blueprint methodology -- a phase-based approach for complex implementations with just-in-time context mapping.
 
 **Customize finance accounts:** Edit `finance-os/src/features/finances/types/index.ts` (the `CUENTAS` array) and update the seed data in your Supabase `cuentas` table.
 
-**Development methodology:** See `.claude/prompts/bucle-agentico-blueprint.md` for the Blueprint methodology — a phase-based approach for complex implementations with just-in-time context mapping.
+## Security
+
+Mission Control includes built-in security layers:
+
+- **Input validation** with Zod schemas on all API routes
+- **SSRF protection** on the agent server HTTP bridge
+- **Row Level Security (RLS)** on all Supabase tables
+- **Email allowlist** for authentication (`ALLOWED_EMAILS`)
+- **Gateway token** for agent server communication (`OPENCLAW_GATEWAY_TOKEN`)
+- **Ops logging** via the activities table for audit trails
 
 ## Tech Stack
 

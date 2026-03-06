@@ -9,6 +9,7 @@ import { downloadMedia, buildPhotoMessage, buildDocumentMessage } from './media.
 import { listTasks } from './db.js'
 import { logger } from './logger.js'
 import { mcStart, mcEnd, mcError } from './mc-client.js'
+import { validateInput } from './security.js'
 
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
@@ -128,7 +129,10 @@ export async function handleMessage(
   await sendTyping()
   const typingInterval = setInterval(() => { void sendTyping() }, TYPING_REFRESH_MS)
 
-  // Run ID único por conversación (para Mission Control)
+  // Input validation (logs suspicious patterns, truncates if too long)
+  rawText = validateInput(rawText, 'telegram')
+
+  // Unique run ID per conversation (for Mission Control)
   const runId = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   mcStart(runId, rawText, 'telegram')
 

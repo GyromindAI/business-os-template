@@ -8,7 +8,7 @@ import type { TaskStatus } from '@/types/database'
 const STATUS_GROUPS: Record<string, TaskStatus[]> = {
   active: ['todo', 'in_progress'],
   done: ['done'],
-  backlog: ['backlog'],
+  inbox: ['backlog'],
 }
 
 export function DashboardOverview() {
@@ -19,7 +19,7 @@ export function DashboardOverview() {
     const total = tasks.length
     const active = tasks.filter((t) => STATUS_GROUPS.active.includes(t.status)).length
     const done = tasks.filter((t) => STATUS_GROUPS.done.includes(t.status)).length
-    const backlog = tasks.filter((t) => STATUS_GROUPS.backlog.includes(t.status)).length
+    const inbox = tasks.filter((t) => STATUS_GROUPS.inbox.includes(t.status)).length
     const overdue = tasks.filter((t) => {
       if (!t.due_at || t.status === 'done' || t.status === 'archived') return false
       return new Date(t.due_at) < new Date()
@@ -28,7 +28,7 @@ export function DashboardOverview() {
     const activeAgents = agents.filter((a) => a.status === 'active').length
     const totalAgents = agents.length
 
-    return { total, active, done, backlog, overdue, urgent, activeAgents, totalAgents }
+    return { total, active, done, inbox, overdue, urgent, activeAgents, totalAgents }
   }, [tasks, agents])
 
   const cards = [

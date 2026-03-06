@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { MessageSquare, Plus, Clock, MoreHorizontal, Star, Pencil, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import { es } from 'date-fns/locale'
 import type { ChatSession } from '../hooks/useChatHistory'
 
 interface ChatSessionsProps {
@@ -31,11 +30,11 @@ export function ChatSessions({
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-3 py-3 border-b border-white/[0.06]">
         <span className="text-[10px] uppercase tracking-widest text-white/30 font-semibold">
-          Conversaciones
+          Conversations
         </span>
         <button
           onClick={onNew}
-          title="Nueva conversación"
+          title="New conversation"
           className="p-1 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/[0.06] transition-colors"
         >
           <Plus size={13} />
@@ -53,7 +52,7 @@ export function ChatSessions({
         ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 px-3 py-8 text-center">
             <MessageSquare size={20} className="text-white/15" />
-            <p className="text-[11px] text-white/25">Sin historial</p>
+            <p className="text-[11px] text-white/25">No history</p>
           </div>
         ) : (
           sessions.map((session) => (
@@ -98,7 +97,6 @@ function SessionItem({
 
   const timeAgo = formatDistanceToNow(new Date(session.updated_at), {
     addSuffix: false,
-    locale: es,
   })
 
   // Close menu on outside click
@@ -127,7 +125,7 @@ function SessionItem({
     setEditing(false)
   }
 
-  const isProtected = session.title === 'Automatizaciones'
+  const isProtected = session.title === 'Automations'
 
   const handleMenuAction = (action: 'favorite' | 'rename' | 'delete') => {
     setMenuOpen(false)
@@ -167,10 +165,13 @@ function SessionItem({
 
         {!editing && (
           <div className="flex items-center gap-1 text-[10px] text-white/25">
-            {session.is_favorite && (
+            {isProtected ? (
+              <Clock size={9} className="text-emerald-400/80 shrink-0" />
+            ) : session.is_favorite ? (
               <Star size={9} className="text-amber-400/70 fill-amber-400/70 shrink-0" />
+            ) : (
+              <Clock size={9} className="shrink-0" />
             )}
-            <Clock size={9} className="shrink-0" />
             <span className="truncate">{timeAgo}</span>
           </div>
         )}
@@ -188,7 +189,7 @@ function SessionItem({
                 : 'text-white/0 group-hover:text-white/30 hover:!text-white/60 hover:bg-white/[0.08]'
               }
             `}
-            title="Opciones"
+            title="Options"
           >
             <MoreHorizontal size={12} />
           </button>
@@ -201,7 +202,7 @@ function SessionItem({
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-white/60 hover:bg-white/[0.06] hover:text-white transition-colors"
               >
                 <Star size={12} className={session.is_favorite ? 'text-amber-400 fill-amber-400' : ''} />
-                {session.is_favorite ? 'Quitar favorito' : 'Favorito'}
+                {session.is_favorite ? 'Unfavorite' : 'Favorite'}
               </button>
               {!isProtected && (
                 <button
@@ -209,7 +210,7 @@ function SessionItem({
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-white/60 hover:bg-white/[0.06] hover:text-white transition-colors"
                 >
                   <Pencil size={12} />
-                  Renombrar
+                  Rename
                 </button>
               )}
               {!isProtected && (
@@ -220,7 +221,7 @@ function SessionItem({
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400/70 hover:bg-red-500/10 hover:text-red-400 transition-colors"
                   >
                     <Trash2 size={12} />
-                    Eliminar
+                    Delete
                   </button>
                 </>
               )}

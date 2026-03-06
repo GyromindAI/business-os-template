@@ -10,14 +10,20 @@ interface PageCache {
 
 interface DrawStore {
   cache: Record<string, PageCache>
+  lastPageId: string | null
+  favorites: string[]
   setPageCache: (pageId: string, data: PageCache) => void
   getPageCache: (pageId: string) => PageCache | undefined
+  setLastPageId: (id: string | null) => void
+  toggleFavorite: (pageId: string) => void
 }
 
 export const useDrawStore = create<DrawStore>()(
   persist(
     (set, get) => ({
       cache: {},
+      lastPageId: null,
+      favorites: [],
       setPageCache: (pageId, data) =>
         set((state) => {
           const current = state.cache[pageId]
@@ -27,6 +33,15 @@ export const useDrawStore = create<DrawStore>()(
           return state
         }),
       getPageCache: (pageId) => get().cache[pageId],
+      setLastPageId: (id) => set({ lastPageId: id }),
+      toggleFavorite: (pageId) =>
+        set((state) => {
+          const favs = state.favorites
+          if (favs.includes(pageId)) {
+            return { favorites: favs.filter((id) => id !== pageId) }
+          }
+          return { favorites: [...favs, pageId] }
+        }),
     }),
     { name: 'draw-cache' },
   ),

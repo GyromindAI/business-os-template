@@ -58,7 +58,7 @@ export function AnalyticsDashboard() {
         return assignees.some((a) => a.agent_id === agent.id)
       })
       const completed = agentTasks.filter((t) => t.status === 'done' || t.status === 'archived')
-      const active = agentTasks.filter((t) => t.status === 'in_progress')
+      const active = agentTasks.filter((t) => t.status === 'in_progress' || t.status === 'todo')
       const agentActivities = filteredActivities.filter((a) => a.agent_id === agent.id)
 
       return {

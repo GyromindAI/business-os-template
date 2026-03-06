@@ -1,6 +1,26 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import webpush from 'web-push'
 import { z } from 'zod'
+
+// ---------------------------------------------------------------------------
+// VAPID (lazy init for push notifications)
+// ---------------------------------------------------------------------------
+
+let vapidReady = false
+function ensureVapid() {
+  if (vapidReady) return false
+  const publicKey = (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '').trim()
+  const privateKey = (process.env.VAPID_PRIVATE_KEY ?? '').trim()
+  if (!publicKey || !privateKey) return false
+  webpush.setVapidDetails(
+    `mailto:${(process.env.VAPID_EMAIL ?? 'admin@example.com').trim()}`,
+    publicKey,
+    privateKey,
+  )
+  vapidReady = true
+  return true
+}
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -134,6 +154,43 @@ async function handleCreateTask(
         task_id: task.id,
         agent_id: assigneeId,
       })
+
+      // Send push notification to the assigned agent's linked user
+      try {
+        const { data: agent } = await supabase
+          .from('agents')
+          .select('user_id')
+          .eq('id', assigneeId)
+          .single()
+
+        if (agent?.user_id) {
+          ensureVapid()
+          const { data: subs } = await supabase
+            .from('push_subscriptions')
+            .select('endpoint, p256dh, auth')
+            .eq('user_id', agent.user_id)
+
+          if (subs?.length) {
+            const pushPayload = JSON.stringify({
+              title: 'New task assigned',
+              body: task.title,
+              url: '/board',
+              tag: `task-assigned-${task.id}`,
+              icon: '/icon.svg',
+            })
+            await Promise.allSettled(
+              subs.map((sub) =>
+                webpush.sendNotification(
+                  { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+                  pushPayload,
+                ),
+              ),
+            )
+          }
+        }
+      } catch (pushErr) {
+        console.error('[openclaw/action] Push notification failed:', pushErr)
+      }
     }
   }
 

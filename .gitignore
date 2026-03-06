@@ -26,6 +26,12 @@ dist/
 # Playwright MCP artifacts
 .playwright-mcp/
 
+# Screenshots (local testing)
+*.png
+# Allow PWA icon PNGs
+!Mission-Control/public/apple-touch-icon.png
+!Mission-Control/public/icon-*.png
+
 # Claude MCP config (contains local paths)
 .mcp.json
 

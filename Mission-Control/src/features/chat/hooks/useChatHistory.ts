@@ -17,7 +17,16 @@ export interface PersistedMessage {
   content: string
   created_at: string
   audio_url?: string | null
+  image_url?: string | null
   metadata?: { source?: string; jobId?: string; jobLabel?: string } | null
+}
+
+function sessionSort(a: ChatSession, b: ChatSession): number {
+  const aIsAuto = a.title === 'Automations'
+  const bIsAuto = b.title === 'Automations'
+  if (aIsAuto !== bIsAuto) return aIsAuto ? -1 : 1
+  if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1
+  return b.updated_at.localeCompare(a.updated_at)
 }
 
 export function useChatHistory() {
@@ -37,10 +46,7 @@ export function useChatHistory() {
       .select('*')
       .order('updated_at', { ascending: false })
       .limit(30)
-    const sorted = ((data as ChatSession[]) ?? []).sort((a, b) => {
-      if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1
-      return b.updated_at.localeCompare(a.updated_at)
-    })
+    const sorted = ((data as ChatSession[]) ?? []).sort(sessionSort)
     setSessions(sorted)
     setLoading(false)
   }, [])
@@ -48,7 +54,7 @@ export function useChatHistory() {
   const createSession = useCallback(async (firstMessage: string): Promise<ChatSession> => {
     const supabase = createClient()
     // Optimistic title while AI generates
-    const fallbackTitle = firstMessage.slice(0, 55) + (firstMessage.length > 55 ? '…' : '')
+    const fallbackTitle = firstMessage.slice(0, 55) + (firstMessage.length > 55 ? '...' : '')
 
     const { data, error } = await supabase
       .from('chat_sessions')
@@ -59,7 +65,7 @@ export function useChatHistory() {
     const session = data as ChatSession
     setSessions((prev) => [session, ...prev])
 
-    // Generate AI title in background — update when ready
+    // Generate AI title in background
     fetch('/api/chat/title', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -86,7 +92,7 @@ export function useChatHistory() {
     setSessions((prev) =>
       prev
         .map((s) => (s.id === sessionId ? { ...s, updated_at: now } : s))
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+        .sort(sessionSort),
     )
   }, [])
 
@@ -102,6 +108,7 @@ export function useChatHistory() {
           role: m.role,
           content: m.content,
           audio_url: m.audioUrl ?? null,
+          image_url: m.imageUrl ?? null,
         })),
       )
       await updateSessionTimestamp(sessionId)
@@ -142,10 +149,7 @@ export function useChatHistory() {
     setSessions((prev) =>
       prev
         .map((s) => (s.id === sessionId ? { ...s, is_favorite: next } : s))
-        .sort((a, b) => {
-          if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1
-          return b.updated_at.localeCompare(a.updated_at)
-        }),
+        .sort(sessionSort),
     )
   }, [sessions])
 
