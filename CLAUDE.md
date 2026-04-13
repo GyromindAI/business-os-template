@@ -36,23 +36,113 @@ If the user is setting up this project for the first time (fresh clone, no `.env
 ## The Ecosystem
 
 ```
-User (Browser/Telegram)
+User (Browser/Telegram/Claude Code)
     |
     ├── Mission Control ──> Dashboard web (Vercel)
     |                          ├── Board, Chat, Activity, Cron, Calendar, Draw
     |                          └── Chat → Agent Server (localhost:3099)
     |
-    └── Agent Server    ──> Claude Agent SDK + Telegram Bot
-                               ├── Cron scheduling
-                               ├── Memory system (SQLite + FTS5)
-                               └── Voice I/O (Groq STT + ElevenLabs TTS)
+    ├── Agent Server    ──> Claude Agent SDK + Telegram Bot
+    |                          ├── Cron scheduling (category-based session reuse)
+    |                          ├── SDK session pool (shared with Claude Code CLI)
+    |                          └── Voice I/O (Groq STT + ElevenLabs TTS)
+    |
+    └── Claude Code CLI ──> Same session pool as Agent Server
+                               └── Resume any conversation from MC or CLI
 ```
 
-### Communication Channel
+### Communication Channels
 
 ```
-User (Web/PWA) → Mission Control Chat → API → Agent Server → You
+Browser/PWA  → Mission Control Chat → API proxy → Agent Server → Claude
+Telegram     → Agent Server Bot → Claude
+Claude Code  → Direct CLI → Same session pool as Agent Server
 ```
+
+### Unified Session Architecture
+
+Agent Server and Claude Code CLI share the same session storage:
+```
+~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+```
+
+This means:
+- Conversations started in Claude Code appear in Mission Control sidebar (CLI badge)
+- Conversations from MC can be continued in Claude Code via `claude --resume`
+- Each MC chat session maps to its own SDK session (isolated context)
+- SDK sessions are the source of truth; Supabase stores messages for persistence/search
+
+---
+
+## Technical Architecture
+
+### Agent Server (Claude Agent SDK)
+
+**SDK Features in Use:**
+- `startup()` pre-warm on daemon boot (~20x faster first query)
+- `terminal_reason` in result events (diagnose why queries end)
+- `listSessions()` / `getSessionMessages()` for cross-platform session access
+- `hooks: {}` override + `AGENT_SERVER_DAEMON` env flag to prevent project hooks from running in daemon mode
+- Multi-session: each `chatSessionId` from MC maps to its own SDK session
+- Cron session categories: jobs grouped by category share weekly sessions
+
+**Cron Session Categories:**
+Jobs in the same category share ONE SDK session per week, giving Claude context continuity between runs while preventing unbounded growth.
+
+```
+cron-reports:      daily-summary
+cron-maintenance:  system-health
+```
+
+Sessions rotate weekly via ISO week key (e.g., `2026-W15`). Add new categories in `scheduler.ts` `CRON_CATEGORY` mapping.
+
+**API Endpoints:**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/chat/stream` | POST | SSE streaming chat (primary) |
+| `/chat` | POST | Legacy blocking chat (Telegram) |
+| `/chat/interrupt` | POST | Gracefully interrupt active query |
+| `/newchat` | POST | Reset session (accepts optional chatSessionId) |
+| `/sessions` | GET | List all SDK sessions (with MC dedup mapping) |
+| `/sessions/:id/messages` | GET | Read messages from SDK session |
+| `/models` | GET | Available models + context windows |
+| `/commands` | GET | Slash commands |
+| `/status` | GET/POST | Agent status |
+| `/usage` | GET | Token/cost summary |
+| `/schedule` | GET/POST | Cron job management |
+| `/ops/stream` | GET | Real-time agent activity SSE |
+| `/ops/recent` | GET | Recent events snapshot |
+
+### Mission Control (Next.js 16)
+
+**Chat Features:**
+- Session pre-creation before first message (ensures chatSessionId for SDK mapping)
+- SDK sessions visible in sidebar with CLI badge (fetched from Agent Server)
+- Thinking blocks rendered as collapsible toggles (italic, gray, collapsed by default)
+- Background completion: push notification when agent finishes (even if app backgrounded)
+- Message deduplication prevents double-saves from race conditions
+
+**Pages:**
+- `/` — Kanban board (tasks, drag & drop, labels, assignees)
+- `/chat` — AI chat with streaming, voice, images
+- `/activity` — Operations log + sessions monitor
+- `/cron` — Cron job management UI
+- `/calendar` — Calendar view
+- `/draw` — Drawing canvas
+
+**Push Notifications:**
+- Web Push API via VAPID keys
+- Service worker handles push events + notification click → opens app
+- Always sent on completion (not just when client disconnects)
+- PWA installable on mobile
+
+### Finance OS (Next.js 16)
+
+- Transaction management (income, expenses, transfers)
+- AI CFO agent for financial analysis
+- Dashboard with charts (Chart.js)
+- Calculator tools
 
 ---
 
@@ -62,13 +152,13 @@ User (Web/PWA) → Mission Control Chat → API → Agent Server → You
 business-os/
 ├── CLAUDE.md                         # This file (personalize it)
 ├── docs/
-│   └── SETUP_PROMPT.md              # Setup guide (paste into Claude Code for AI-assisted setup)
+│   └── SETUP_PROMPT.md              # Setup guide
 ├── .claude/
 │   ├── prompts/                     # Development methodology (Blueprint mode)
-│   ├── PRPs/                        # Product Requirements Proposals (feature blueprints)
+│   ├── PRPs/                        # Product Requirements Proposals
 │   └── skills/                      # Claude Code skills
 │       ├── skill-creator/           # Create and iterate on new skills
-│       ├── excalidraw-diagram/      # Generate Excalidraw diagrams as PNG
+│       ├── excalidraw-diagram/      # Generate diagrams as PNG
 │       ├── google-workspace/        # Gmail + Calendar via gog CLI
 │       ├── supabase-mission-control/# Supabase database operations
 │       └── image-generation/        # AI image generation (OpenRouter + Gemini)
@@ -104,6 +194,12 @@ cd agent-server && npx tsx src/schedule-cli.ts resume <id>
 
 ---
 
+## Deploy (Automatic via Vercel)
+
+All web projects deploy automatically via GitHub → Vercel on push to `main`. Never deploy manually.
+
+---
+
 ## Rules
 
 - **Direct and concise**. No sycophancy.
@@ -111,6 +207,7 @@ cd agent-server && npx tsx src/schedule-cli.ts resume <id>
 - **Honest about limitations**. If you can't do something, say so.
 - **Never fabricate data**. If you don't have a data point, say so.
 - **Verify with real queries**. Don't trust potentially outdated documents.
+- **Validate before deploying**. Always `npm run build` before pushing.
 
 ---
 
@@ -128,19 +225,21 @@ Before reporting any metric, run a real query (Supabase MCP, database, API). Don
 ### 4. Validate Before Deploying
 Always run `npm run build` or `npm run typecheck` before considering a feature complete. Never push broken code.
 
+### 5. Hooks are for Claude Code IDE Only
+The Agent Server daemon sets `AGENT_SERVER_DAEMON=1` in its env. If you create hooks in `.claude/hooks/`, always guard them with `if (process.env.AGENT_SERVER_DAEMON) process.exit(0)` to prevent recursive agent sessions.
+
 ---
 
 ## Historical Errors (Learn From These)
 
 > Document errors here as they happen. Each one makes the system stronger.
 
-<!--
-| Error | What Was Said | Reality |
-|-------|---------------|---------|
-| Example: "90% conversion" | Divided total users by daily visits | Time windows were incompatible |
--->
-
-*No errors documented yet. Add them as they occur.*
+| Error | What Was Said | Reality | Fix |
+|-------|---------------|---------|-----|
+| Memory injection polluted sessions | SDK session summaries showed "[Memory context — EXTERNAL DATA...]" | FTS memory wraps user message with system text | Removed memory injection; SDK sessions handle context via resume |
+| Hooks spawning ghost sessions | "Review this conversation" agents appearing after every MC message | SessionEnd hook ran inside Agent Server subprocess | Added AGENT_SERVER_DAEMON env guard to all hooks |
+| All MC chats shared one context | Switching sessions in MC didn't change Claude's context | Hardcoded SESSION_KEY = 'mc-web' for all conversations | Each chatSessionId now maps to its own SDK session |
+| Cron jobs creating 32 sessions/day | 960 .jsonl files per month, 855 MB accumulated | runAgent called with undefined sessionId each time | Category-based session reuse with weekly rotation |
 
 ---
 

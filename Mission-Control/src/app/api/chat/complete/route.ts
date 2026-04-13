@@ -33,11 +33,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { chatSessionId, userMessage, assistantMessage, audioUrl } = (await req.json()) as {
+  const { chatSessionId, userMessage, assistantMessage, audioUrl, clientWasConnected } = (await req.json()) as {
     chatSessionId?: string | null
     userMessage: string
     assistantMessage: string
     audioUrl?: string | null
+    clientWasConnected?: boolean
   }
 
   if (!userMessage || !assistantMessage) {
@@ -45,36 +46,46 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient()
-
-  // Create session if needed (user navigated away before session was created)
   let sessionId = chatSessionId
-  if (!sessionId) {
-    const title = userMessage.slice(0, 55) + (userMessage.length > 55 ? '...' : '')
-    const { data, error } = await supabase
-      .from('chat_sessions')
-      .insert({ title })
-      .select('id')
-      .single()
-    if (error || !data) {
-      return NextResponse.json({ error: 'Failed to create session' }, { status: 500 })
+
+  // Only save messages if client was disconnected (otherwise frontend already saved via onSave).
+  // Always send push notification regardless.
+  if (!clientWasConnected) {
+    if (!sessionId) {
+      const title = userMessage.slice(0, 55) + (userMessage.length > 55 ? '...' : '')
+      const { data, error } = await supabase
+        .from('chat_sessions')
+        .insert({ title })
+        .select('id')
+        .single()
+      if (error || !data) {
+        return NextResponse.json({ error: 'Failed to create session' }, { status: 500 })
+      }
+      sessionId = data.id
     }
-    sessionId = data.id
-  }
 
-  // Save messages
-  const { error: msgError } = await supabase.from('chat_messages').insert([
-    { session_id: sessionId, role: 'user', content: userMessage, audio_url: audioUrl ?? null },
-    { session_id: sessionId, role: 'assistant', content: assistantMessage },
-  ])
-  if (msgError) {
-    return NextResponse.json({ error: 'Failed to save messages' }, { status: 500 })
-  }
+    // Deduplicate: check if these messages already exist (frontend may have saved via onSave
+    // before the disconnect was detected, or user sent the same message twice on mobile).
+    const { data: existing } = await supabase
+      .from('chat_messages')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('role', 'user')
+      .eq('content', userMessage)
+      .limit(1)
 
-  // Update session timestamp
-  await supabase
-    .from('chat_sessions')
-    .update({ updated_at: new Date().toISOString() })
-    .eq('id', sessionId)
+    if (!existing || existing.length === 0) {
+      await supabase.from('chat_messages').insert([
+        { session_id: sessionId, role: 'user', content: userMessage, audio_url: audioUrl ?? null },
+        { session_id: sessionId, role: 'assistant', content: assistantMessage },
+      ])
+    }
+
+    await supabase
+      .from('chat_sessions')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', sessionId)
+  }
 
   // Send push notification
   ensureVapid()

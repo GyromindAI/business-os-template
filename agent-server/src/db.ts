@@ -113,6 +113,15 @@ export function initDatabase(): void {
 
     CREATE INDEX IF NOT EXISTS idx_query_usage_created
       ON query_usage(created_at);
+
+    -- Cron session reuse: one SDK session per category per week.
+    CREATE TABLE IF NOT EXISTS cron_sessions (
+      category   TEXT NOT NULL,
+      week_key   TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (category, week_key)
+    );
   `)
 }
 
@@ -288,6 +297,36 @@ export function getTask(id: string): ScheduledTask | undefined {
 
 export function taskExists(id: string): boolean {
   return db.prepare('SELECT id FROM scheduled_tasks WHERE id = ?').get(id) !== undefined
+}
+
+// ============================================================
+// CRON SESSIONS (category → SDK session_id, rotated weekly)
+// ============================================================
+
+export function currentWeekKey(): string {
+  const d = new Date()
+  const jan1 = new Date(d.getFullYear(), 0, 1)
+  const days = Math.floor((d.getTime() - jan1.getTime()) / 86_400_000)
+  const week = Math.ceil((days + jan1.getDay() + 1) / 7)
+  return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`
+}
+
+export function getCronSession(category: string): string | undefined {
+  const week = currentWeekKey()
+  const row = db
+    .prepare('SELECT session_id FROM cron_sessions WHERE category = ? AND week_key = ?')
+    .get(category, week) as { session_id: string } | undefined
+  return row?.session_id
+}
+
+export function setCronSession(category: string, sessionId: string): void {
+  const week = currentWeekKey()
+  db.prepare(`
+    INSERT INTO cron_sessions (category, week_key, session_id, created_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(category, week_key) DO UPDATE SET
+      session_id = excluded.session_id
+  `).run(category, week, sessionId, Date.now())
 }
 
 // ============================================================

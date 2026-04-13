@@ -25,9 +25,10 @@ import { readEnvFile } from './env.js'
 import { PROJECT_ROOT } from './config.js'
 import { runAgent, runAgentStream, getAvailableModels, getCurrentModel, setCurrentModel, getContextInfo, EffortLevel, type Query } from './agent.js'
 import { downloadFromUrl, buildPhotoMessage } from './media.js'
-import { getSession, setSession, clearSession, listTasks, getTask, updateTaskStatus, updateTaskAfterRun, saveQueryUsage, getUsageSummary } from './db.js'
-import { computeNextRun, runDueTasks } from './scheduler.js'
+import { getSession, setSession, clearSession, listTasks, getTask, updateTaskStatus, updateTaskAfterRun, saveQueryUsage, getUsageSummary, getDb, getCronSession, setCronSession } from './db.js'
+import { computeNextRun, runDueTasks, CRON_CATEGORY } from './scheduler.js'
 import { buildMemoryContext, saveConversationTurn } from './memory.js'
+import { listSessions, getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import { logger } from './logger.js'
 import { validateInput, validateUrl, redactSecrets, MAX_DOWNLOAD_SIZE } from './security.js'
 import { opsLogger, type OpsEvent } from './ops-logger.js'
@@ -323,6 +324,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const stream = { interrupted: false, clientConnected: true }
     activeStream = stream
     const chatSessionId = typeof parsed['chatSessionId'] === 'string' ? parsed['chatSessionId'] : null
+    const sdkSessionIdOverride = typeof parsed['sdkSessionId'] === 'string' ? parsed['sdkSessionId'] : null
     const audioUrl = typeof parsed['audioUrl'] === 'string' ? parsed['audioUrl'] : null
     const imageUrl = typeof parsed['imageUrl'] === 'string' ? parsed['imageUrl'] : null
     const context = typeof parsed['context'] === 'string' ? parsed['context'] : null
@@ -341,7 +343,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     res.on('error', () => { stream.clientConnected = false })
 
     try {
-      const sessionId = getSession(SESSION_KEY)
+      // Each MC chat session maps to its own SDK session for isolated context.
+      // sdkSessionIdOverride: direct resume of a CLI session (bypasses SQLite lookup).
+      // Falls back to global 'mc-web' for first message (no session yet) or legacy clients.
+      const sessionKey = chatSessionId ?? SESSION_KEY
+      const sessionId = sdkSessionIdOverride ?? getSession(sessionKey)
 
       // If user sent images, download to local filesystem so Claude Code can Read them
       // imageUrl can contain multiple URLs separated by newline
@@ -365,10 +371,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
       const isCompactCmd = message === '/compact'
 
-      // Slash commands like /compact must reach the SDK as-is (no memory context wrapping)
-      const memCtx = isCompactCmd ? null : await buildMemoryContext(SESSION_KEY, message)
+      // No memory injection. With multi-session SDK, each session maintains its own
+      // context via resume. CLAUDE.md provides business context.
       const contextPrefix = context && !isCompactCmd ? `[Context: ${context}]\n\n` : ''
-      const fullMessage = isCompactCmd ? message : contextPrefix + imagePrefix + (memCtx ? `${memCtx}\n\n${message}` : message)
+      const fullMessage = isCompactCmd ? message : contextPrefix + imagePrefix + message
 
       const effort = typeof parsed['effort'] === 'string'
         ? (['low', 'medium', 'high', 'max'].includes(parsed['effort']) ? parsed['effort'] as EffortLevel : undefined)
@@ -393,7 +399,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         // Save usage data to SQLite
         if (event.type === 'usage') {
           saveQueryUsage({
-            sessionKey: SESSION_KEY,
+            sessionKey: sessionKey,
             costUsd: event.costUsd,
             inputTokens: event.inputTokens,
             outputTokens: event.outputTokens,
@@ -420,13 +426,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
 
       // Persist session and memory (always, regardless of client state)
-      if (newSessionId) setSession(SESSION_KEY, newSessionId)
+      if (newSessionId) setSession(sessionKey, newSessionId)
       if (resultText.trim()) {
         await saveConversationTurn(SESSION_KEY, message, resultText.trim())
       }
 
-      // Background completion: client left during processing, save to MC + push
-      if (!stream.clientConnected && !stream.interrupted && resultText.trim() && ALLOWED_ORIGIN) {
+      // Background completion: save to MC + push notification.
+      // If client is still connected, frontend already saved via onSave callback —
+      // but we still POST for push notification (mobile users who leave the app).
+      // If client disconnected, this also persists the messages to Supabase.
+      if (!stream.interrupted && resultText.trim() && ALLOWED_ORIGIN) {
         fetch(`${ALLOWED_ORIGIN}/api/chat/complete`, {
           method: 'POST',
           headers: {
@@ -438,6 +447,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
             userMessage: message,
             assistantMessage: resultText.trim(),
             audioUrl,
+            clientWasConnected: stream.clientConnected,
           }),
         }).catch((err) => logger.error({ err }, 'background completion save failed'))
       }
@@ -498,6 +508,47 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     } catch (err) {
       logger.error({ err }, 'server /chat error')
       sendJSON(res, 500, { error: String(err) })
+    }
+    return
+  }
+
+  // GET /sessions — list all SDK sessions (shared pool with Claude Code CLI)
+  if (req.method === 'GET' && req.url?.startsWith('/sessions') && !req.url.includes('/messages')) {
+    try {
+      const url = new URL(req.url, `http://localhost:${PORT}`)
+      const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '30', 10), 100)
+
+      const sdkSessions = await listSessions({ dir: PROJECT_ROOT, limit })
+
+      // Build reverse map: sdk_session_id → chat_session_id
+      const allDbSessions = getDb()
+        .prepare('SELECT chat_id, session_id FROM sessions')
+        .all() as Array<{ chat_id: string; session_id: string }>
+      const sdkToMc = new Map(allDbSessions.map((r) => [r.session_id, r.chat_id]))
+
+      const enriched = (sdkSessions as Record<string, unknown>[]).map((s) => ({
+        ...s,
+        linkedChatSessionId: sdkToMc.get(s['sessionId'] as string) ?? null,
+      }))
+
+      sendJSON(res, 200, { sessions: enriched })
+    } catch (err) {
+      logger.error({ err }, 'listSessions error')
+      sendJSON(res, 500, { error: 'Failed to list sessions' })
+    }
+    return
+  }
+
+  // GET /sessions/:id/messages — read messages from an SDK session
+  const sessionsMatch = req.url?.match(/^\/sessions\/([^/]+)\/messages$/)
+  if (req.method === 'GET' && sessionsMatch) {
+    try {
+      const sessionId = sessionsMatch[1]
+      const messages = await getSessionMessages(sessionId, { dir: PROJECT_ROOT })
+      sendJSON(res, 200, { messages })
+    } catch (err) {
+      logger.error({ err }, 'getSessionMessages error')
+      sendJSON(res, 500, { error: 'Failed to get session messages' })
     }
     return
   }

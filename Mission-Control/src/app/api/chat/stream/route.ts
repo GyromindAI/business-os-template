@@ -35,6 +35,7 @@ export async function POST(request: Request) {
         ...(typeof body['chatSessionId'] === 'string' && { chatSessionId: body['chatSessionId'] }),
         ...(typeof body['audioUrl'] === 'string' && { audioUrl: body['audioUrl'] }),
         ...(typeof body['imageUrl'] === 'string' && { imageUrl: body['imageUrl'] }),
+        ...(typeof body['sdkSessionId'] === 'string' && { sdkSessionId: body['sdkSessionId'] }),
         ...(typeof body['context'] === 'string' && { context: body['context'] }),
       }),
       signal: request.signal,

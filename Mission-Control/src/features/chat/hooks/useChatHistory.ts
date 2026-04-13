@@ -8,6 +8,10 @@ export interface ChatSession {
   is_favorite: boolean
   created_at: string
   updated_at: string
+  /** SDK-only sessions have their sessionId here for resume */
+  sdkSessionId?: string
+  /** True if this session comes from SDK (Claude Code CLI) and has no Supabase entry */
+  isSDKOnly?: boolean
 }
 
 export interface PersistedMessage {
@@ -38,17 +42,64 @@ export function useChatHistory() {
     loadSessions()
   }, [])
 
+  // Noise patterns: cron jobs, /status, system commands — not real conversations
+  const SDK_NOISE = /^(Unknown skill:|\/status|\/compact|\/context|\/model|testing$)/i
+
   const loadSessions = useCallback(async () => {
     setLoading(true)
+
+    // 1. Load MC sessions first (fast — Supabase edge)
     const supabase = createClient()
     const { data } = await supabase
       .from('chat_sessions')
       .select('*')
       .order('updated_at', { ascending: false })
       .limit(30)
-    const sorted = ((data as ChatSession[]) ?? []).sort(sessionSort)
-    setSessions(sorted)
+    const mcSessions = ((data as ChatSession[]) ?? [])
+
+    // Show MC sessions immediately — don't wait for SDK
+    setSessions(mcSessions.sort(sessionSort))
     setLoading(false)
+
+    // 2. Fetch SDK sessions in background (slower — disk I/O via agent server)
+    try {
+      const res = await fetch('/api/chat/sessions?limit=20')
+      if (!res.ok) return
+      const { sessions: sdkSessions } = await res.json() as {
+        sessions: Array<{
+          sessionId: string
+          summary: string
+          lastModified: number
+          fileSize: number
+          customTitle?: string
+          firstPrompt?: string
+          linkedChatSessionId: string | null
+        }>
+      }
+
+      const mcIds = new Set(mcSessions.map((s) => s.id))
+      const sdkOnlySessions: ChatSession[] = sdkSessions
+        // Filter out sessions already linked to MC
+        .filter((s) => !s.linkedChatSessionId || !mcIds.has(s.linkedChatSessionId))
+        // Filter out noise (cron jobs, /status, system commands)
+        .filter((s) => {
+          const title = s.customTitle || s.summary || s.firstPrompt || ''
+          return !SDK_NOISE.test(title) && title.length > 5 && s.fileSize > 500
+        })
+        .map((s) => ({
+          id: `sdk:${s.sessionId}`,
+          title: s.customTitle || s.summary || s.firstPrompt?.slice(0, 60) || 'Claude Code session',
+          is_favorite: false,
+          created_at: new Date(s.lastModified).toISOString(),
+          updated_at: new Date(s.lastModified).toISOString(),
+          sdkSessionId: s.sessionId,
+          isSDKOnly: true,
+        }))
+
+      if (sdkOnlySessions.length > 0) {
+        setSessions((prev) => [...prev.filter((s) => !s.isSDKOnly), ...sdkOnlySessions].sort(sessionSort))
+      }
+    } catch { /* Agent server offline — MC sessions only, no error */ }
   }, [])
 
   const createSession = useCallback(async (firstMessage: string): Promise<ChatSession> => {
@@ -117,6 +168,67 @@ export function useChatHistory() {
   )
 
   const loadMessages = useCallback(async (sessionId: string): Promise<PersistedMessage[]> => {
+    // SDK-only sessions: load from agent server endpoint
+    if (sessionId.startsWith('sdk:')) {
+      const sdkId = sessionId.slice(4)
+      try {
+        const res = await fetch(`/api/chat/sessions/${sdkId}/messages`)
+        if (!res.ok) return []
+        const { messages: rawMsgs } = await res.json() as {
+          messages: Array<{
+            type: string
+            uuid?: string
+            message?: {
+              role?: string
+              content?: Array<{ type: string; text?: string; thinking?: string }>
+            }
+          }>
+        }
+
+        // Build messages: attach thinking to the next text response (not as separate bubbles)
+        const result: PersistedMessage[] = []
+        let pendingThinking: string[] = []
+
+        for (const m of rawMsgs) {
+          const role = m.type === 'user' ? 'user' : m.type === 'assistant' ? 'assistant' : null
+          if (!role) continue
+
+          const blocks = m.message?.content
+          if (!Array.isArray(blocks)) continue
+
+          // Collect thinking blocks
+          for (const b of blocks) {
+            if (b.type === 'thinking' && b.thinking) {
+              pendingThinking.push(`<!--thinking-->${b.thinking}<!--/thinking-->`)
+            }
+          }
+
+          // Extract text blocks
+          const textParts = blocks
+            .filter((b) => b.type === 'text' && b.text)
+            .map((b) => b.text!)
+
+          // Only create a message if there's actual text
+          if (textParts.length === 0) continue
+
+          // Prepend any pending thinking to this message
+          const allParts = [...pendingThinking, ...textParts]
+          pendingThinking = []
+
+          result.push({
+            id: m.uuid ?? `sdk-${result.length}`,
+            session_id: sessionId,
+            role,
+            content: allParts.join('\n\n'),
+            created_at: new Date().toISOString(),
+          })
+        }
+
+        return result
+      } catch { return [] }
+    }
+
+    // MC sessions: load from Supabase
     const supabase = createClient()
     const { data } = await supabase
       .from('chat_messages')

@@ -476,7 +476,27 @@ export function ChatPanel() {
     }
 
     const defaultMsg = pendingImages.length > 1 ? `Analyze these ${pendingImages.length} images` : 'Analyze this image'
-    sendMessage(msg.trim() || defaultMsg, { imageUrl, chatSessionId: activeSession?.id })
+    const finalMsg = msg.trim() || defaultMsg
+
+    // Ensure a chat session exists BEFORE sending so agent server can map SDK session to it.
+    // Previously, session was created in onSave (after response), so first message had no chatSessionId.
+    let sessionId = activeSession?.id
+    if (!sessionId) {
+      try {
+        const newSession = await history.createSession(finalMsg)
+        setActiveSession(newSession)
+        sessionId = newSession.id
+        localStorage.setItem('mc_lastChatSessionId', newSession.id)
+      } catch (err) {
+        console.error('[ChatPanel] Failed to pre-create session:', err)
+      }
+    }
+
+    sendMessage(finalMsg, {
+      imageUrl,
+      chatSessionId: sessionId,
+      sdkSessionId: activeSession?.sdkSessionId,
+    })
     setInput('')
     setPaletteQuery(null)
     setPaletteSelectedIndex(0)

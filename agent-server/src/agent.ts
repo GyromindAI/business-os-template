@@ -31,6 +31,7 @@ export interface AgentResult {
   isCompact?: boolean
   tokensBefore?: number
   tokensAfter?: number
+  terminalReason?: string
 }
 
 // ─── SSE Stream Events ────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ export type SSEEvent =
   | { type: 'tool_done'; toolId: string }
   | { type: 'compact'; tokensBefore?: number; tokensAfter?: number }
   | { type: 'usage'; costUsd: number; inputTokens: number; outputTokens: number; durationMs: number; numTurns: number; model?: string; contextUsed?: number; contextTotal?: number }
-  | { type: 'result'; text: string }
+  | { type: 'result'; text: string; terminalReason?: string }
   | { type: 'model_changed'; model: string }
   | { type: 'interrupt' }
   | { type: 'error'; message: string }
@@ -87,10 +88,11 @@ export async function* runAgentStream(
         cwd: PROJECT_ROOT,
         resume: sessionId,
         settingSources: ['project', 'user'],
+        hooks: {},
         permissionMode: 'bypassPermissions',
         abortController: ac,
         includePartialMessages: true,
-        env: process.env as Record<string, string>,
+        env: { ...process.env, AGENT_SERVER_DAEMON: '1' } as Record<string, string>,
         ...(effort && { effort }),
         ...(currentModelId && { model: currentModelId }),
       },
@@ -250,7 +252,8 @@ export async function* runAgentStream(
           contextTotal: contextWindowSize ?? undefined,
         }
 
-        yield { type: 'result', text: resultText }
+        const terminalReason = e['terminal_reason'] as string | undefined
+        yield { type: 'result', text: resultText, terminalReason }
       }
     }
   } catch (err) {
@@ -286,6 +289,7 @@ export async function runAgent(
   let isCompact = false
   let tokensBefore: number | undefined
   let tokensAfter: number | undefined
+  let terminalReason: string | undefined
 
   const typingInterval = onTyping ? setInterval(onTyping, 4000) : null
   const ac = new AbortController()
@@ -298,9 +302,10 @@ export async function runAgent(
         cwd: PROJECT_ROOT,
         resume: sessionId,
         settingSources: ['project', 'user'],
+        hooks: {},
         permissionMode: 'bypassPermissions',
         abortController: ac,
-        env: process.env as Record<string, string>,
+        env: { ...process.env, AGENT_SERVER_DAEMON: '1' } as Record<string, string>,
         ...(currentModelId && { model: currentModelId }),
       },
     })
@@ -363,6 +368,8 @@ export async function runAgent(
         const durationMs = (e['duration_ms'] as number) ?? 0
         const numTurns = (e['num_turns'] as number) ?? 0
 
+        terminalReason = e['terminal_reason'] as string | undefined
+
         opsLogger.log('agent_result', source, {
           costUsd,
           inputTokens: usage['input_tokens'] ?? 0,
@@ -371,6 +378,7 @@ export async function runAgent(
           numTurns,
           model: currentModelId,
           resultLength: resultText?.length ?? 0,
+          terminalReason,
         }, newSessionId)
       }
     }
@@ -391,7 +399,7 @@ export async function runAgent(
   }
 
   logger.debug({ sessionId, newSessionId, length: resultText?.length, isCompact }, 'runAgent complete')
-  return { text: resultText, newSessionId, slashCommands, isCompact, tokensBefore, tokensAfter }
+  return { text: resultText, newSessionId, slashCommands, isCompact, tokensBefore, tokensAfter, terminalReason }
 }
 
 /**

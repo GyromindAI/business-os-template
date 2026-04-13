@@ -3,7 +3,7 @@ const _require = createRequire(import.meta.url)
 // cron-parser is CJS — use createRequire for reliable interop
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { parseExpression } = _require('cron-parser') as any
-import { getDueTasks, createTask, updateTaskAfterRun, taskExists, listTasks, getDb } from './db.js'
+import { getDueTasks, createTask, updateTaskAfterRun, taskExists, listTasks, getDb, getCronSession, setCronSession } from './db.js'
 import { runAgent } from './agent.js'
 import { logger } from './logger.js'
 import { ALLOWED_CHAT_ID } from './config.js'
@@ -13,6 +13,11 @@ import { opsLogger } from './ops-logger.js'
 let schedulerInterval: ReturnType<typeof setInterval> | null = null
 
 const SCHEDULER_TZ = process.env['SCHEDULER_TZ'] ?? 'UTC'
+
+export const CRON_CATEGORY: Record<string, string> = {
+  'daily-summary':    'cron-reports',
+  'system-health':    'cron-maintenance',
+}
 
 export function computeNextRun(cronExpression: string): number {
   const interval = parseExpression(cronExpression, { tz: SCHEDULER_TZ })
@@ -34,7 +39,12 @@ export async function runDueTasks(): Promise<void> {
     opsLogger.log('cron_start', 'cron', { jobId: task.id, schedule: task.schedule })
 
     try {
-      const result = await runAgent(task.prompt, undefined, undefined, 'cron')
+      const category = CRON_CATEGORY[task.id]
+      const existingSessionId = category ? getCronSession(category) : undefined
+      const result = await runAgent(task.prompt, existingSessionId, undefined, 'cron')
+      if (category && result.newSessionId) {
+        setCronSession(category, result.newSessionId)
+      }
       const text = result.text?.trim() ?? ''
 
       // Deliver result to Mission Control

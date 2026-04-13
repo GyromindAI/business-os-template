@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { MessageSquare, Plus, Clock, MoreHorizontal, Star, Pencil, Trash2 } from 'lucide-react'
+import { MessageSquare, Plus, Clock, MoreHorizontal, Star, Pencil, Trash2, Terminal } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import type { ChatSession } from '../hooks/useChatHistory'
 
@@ -165,7 +165,9 @@ function SessionItem({
 
         {!editing && (
           <div className="flex items-center gap-1 text-[10px] text-white/25">
-            {isProtected ? (
+            {session.isSDKOnly ? (
+              <Terminal size={9} className="text-violet-400/80 shrink-0" />
+            ) : isProtected ? (
               <Clock size={9} className="text-emerald-400/80 shrink-0" />
             ) : session.is_favorite ? (
               <Star size={9} className="text-amber-400/70 fill-amber-400/70 shrink-0" />
@@ -173,6 +175,9 @@ function SessionItem({
               <Clock size={9} className="shrink-0" />
             )}
             <span className="truncate">{timeAgo}</span>
+            {session.isSDKOnly && (
+              <span className="ml-auto px-1 py-px rounded text-[8px] font-medium bg-violet-500/20 text-violet-400/80">CLI</span>
+            )}
           </div>
         )}
       </div>

@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
-import { TELEGRAM_BOT_TOKEN, STORE_DIR } from './config.js'
+import { TELEGRAM_BOT_TOKEN, STORE_DIR, PROJECT_ROOT } from './config.js'
 import { readEnvFile } from './env.js'
 import { initDatabase } from './db.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
@@ -67,6 +67,17 @@ async function main(): Promise<void> {
   // Expose gog CLI config to Agent SDK subprocess (non-secrets, needed for Google Workspace)
   const gogVars = readEnvFile(['GOG_KEYRING_PASSWORD', 'GOG_ENABLE_COMMANDS'])
   for (const [k, v] of Object.entries(gogVars)) { if (v) process.env[k] = v }
+
+  // Pre-warm Agent SDK subprocess (~20x faster first query)
+  import('@anthropic-ai/claude-agent-sdk').then((sdk) => {
+    const startupFn = (sdk as Record<string, unknown>)['startup'] as
+      ((opts?: { options?: { cwd?: string } }) => Promise<void>) | undefined
+    if (startupFn) {
+      startupFn({ options: { cwd: PROJECT_ROOT } }).catch((err: unknown) => {
+        logger.warn({ err }, 'SDK pre-warm failed (non-fatal)')
+      })
+    }
+  }).catch(() => { /* SDK import failure is non-fatal */ })
 
   // Mission Control web server (localhost:3099)
   startMCServer()

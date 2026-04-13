@@ -5,9 +5,13 @@ import { readEnvFile } from './env.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-export const PROJECT_ROOT = join(__dirname, '..')
-export const STORE_DIR = join(PROJECT_ROOT, 'store')
-export const UPLOADS_DIR = join(PROJECT_ROOT, 'workspace', 'uploads')
+// SDK cwd points to repo root so sessions are shared with Claude Code CLI.
+export const PROJECT_ROOT = join(__dirname, '..', '..')
+
+// Storage stays in agent-server/ (SQLite DB, uploads)
+const AGENT_DIR = join(__dirname, '..')
+export const STORE_DIR = join(AGENT_DIR, 'store')
+export const UPLOADS_DIR = join(AGENT_DIR, 'workspace', 'uploads')
 
 const env = readEnvFile()
 

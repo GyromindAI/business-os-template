@@ -286,69 +286,120 @@ const ChatImage = memo(function ChatImage({ src, alt }: { src?: string; alt?: st
   )
 }, (prev, next) => prev.src === next.src && prev.alt === next.alt)
 
+// ─── Thinking toggle (collapsed by default) ─────────────────────────────────
+
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="text-[11px] text-white/25 italic hover:text-white/40 transition-colors"
+      >
+        {open ? '▾' : '▸'} Thinking
+      </button>
+      {open && (
+        <div className="mt-1 pl-3 border-l border-white/[0.06] text-[11px] text-white/25 leading-relaxed whitespace-pre-wrap">
+          {text}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }) {
-  // Strip internal markers (skill loading, system tags) that shouldn't be visible
-  const cleaned = content
-    .replace(/<details>[\s\S]*?<\/details>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+const markdownComponents = {
+  code: CodeBlock,
+  p: ({ children }: ComponentPropsWithoutRef<'p'>) => (
+    <p className="mb-1 last:mb-0 whitespace-pre-wrap break-words">{children}</p>
+  ),
+  h1: ({ children }: ComponentPropsWithoutRef<'h1'>) => <h1 className="text-base font-bold text-white mt-2.5 mb-1 first:mt-0">{children}</h1>,
+  h2: ({ children }: ComponentPropsWithoutRef<'h2'>) => <h2 className="text-sm font-semibold text-white mt-2.5 mb-0.5 first:mt-0">{children}</h2>,
+  h3: ({ children }: ComponentPropsWithoutRef<'h3'>) => <h3 className="text-xs font-semibold text-white/80 mt-2 mb-0.5 first:mt-0">{children}</h3>,
+  ul: ({ children }: ComponentPropsWithoutRef<'ul'>) => <ul className="mb-1 pl-4 space-y-px list-disc list-outside">{children}</ul>,
+  ol: ({ children }: ComponentPropsWithoutRef<'ol'>) => <ol className="mb-1 pl-4 space-y-px list-decimal list-outside">{children}</ol>,
+  li: ({ children }: ComponentPropsWithoutRef<'li'>) => <li className="text-sm leading-normal">{children}</li>,
+  blockquote: ({ children }: ComponentPropsWithoutRef<'blockquote'>) => (
+    <blockquote className="my-1.5 pl-3 border-l-2 border-violet-400/40 text-white/60 italic">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-2 border-white/[0.08]" />,
+  strong: ({ children }: ComponentPropsWithoutRef<'strong'>) => <strong className="font-semibold text-white">{children}</strong>,
+  em: ({ children }: ComponentPropsWithoutRef<'em'>) => <em className="text-white/70 italic">{children}</em>,
+  a: ({ href, children }: ComponentPropsWithoutRef<'a'>) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-violet-400 hover:text-violet-300 underline underline-offset-2 transition-colors"
+    >
+      {children}
+    </a>
+  ),
+  img: ({ src, alt }: ComponentPropsWithoutRef<'img'>) => <ChatImage src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} />,
+  table: ({ children }: ComponentPropsWithoutRef<'table'>) => (
+    <div className="my-3 overflow-x-auto rounded-xl border border-white/[0.08]">
+      <table className="min-w-full text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }: ComponentPropsWithoutRef<'th'>) => (
+    <th className="px-3 py-2 text-left font-semibold text-white/60 border-b border-white/[0.08] bg-white/[0.04]">
+      {children}
+    </th>
+  ),
+  td: ({ children }: ComponentPropsWithoutRef<'td'>) => (
+    <td className="px-3 py-2 border-b border-white/[0.04] text-white/80">{children}</td>
+  ),
+}
 
-  if (!cleaned) return null
+export const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }) {
+  // Extract thinking blocks into separate components, render rest as markdown
+  const thinkingRegex = /<!--thinking-->([\s\S]*?)<!--\/thinking-->/g
+  const segments: Array<{ type: 'thinking' | 'text'; content: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = thinkingRegex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', content: content.slice(lastIndex, match.index) })
+    }
+    segments.push({ type: 'thinking', content: match[1] })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < content.length) {
+    segments.push({ type: 'text', content: content.slice(lastIndex) })
+  }
+
+  // Clean text segments (strip other internal markers)
+  const cleanedSegments = segments.map((s) => {
+    if (s.type !== 'text') return s
+    const cleaned = s.content
+      .replace(/<details>[\s\S]*?<\/details>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    return { ...s, content: cleaned }
+  }).filter((s) => s.content)
+
+  if (cleanedSegments.length === 0) return null
 
   return (
     <div className="markdown-message text-sm leading-normal min-w-0">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={{
-          code: CodeBlock,
-          p: ({ children }) => (
-            <p className="mb-1 last:mb-0 whitespace-pre-wrap break-words">{children}</p>
-          ),
-          h1: ({ children }) => <h1 className="text-base font-bold text-white mt-2.5 mb-1 first:mt-0">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-sm font-semibold text-white mt-2.5 mb-0.5 first:mt-0">{children}</h2>,
-          h3: ({ children }) => <h3 className="text-xs font-semibold text-white/80 mt-2 mb-0.5 first:mt-0">{children}</h3>,
-          ul: ({ children }) => <ul className="mb-1 pl-4 space-y-px list-disc list-outside">{children}</ul>,
-          ol: ({ children }) => <ol className="mb-1 pl-4 space-y-px list-decimal list-outside">{children}</ol>,
-          li: ({ children }) => <li className="text-sm leading-normal">{children}</li>,
-          blockquote: ({ children }) => (
-            <blockquote className="my-1.5 pl-3 border-l-2 border-violet-400/40 text-white/60 italic">
-              {children}
-            </blockquote>
-          ),
-          hr: () => <hr className="my-2 border-white/[0.08]" />,
-          strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-          em: ({ children }) => <em className="text-white/70 italic">{children}</em>,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-violet-400 hover:text-violet-300 underline underline-offset-2 transition-colors"
-            >
-              {children}
-            </a>
-          ),
-          img: ({ src, alt }) => <ChatImage src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} />,
-          table: ({ children }) => (
-            <div className="my-3 overflow-x-auto rounded-xl border border-white/[0.08]">
-              <table className="min-w-full text-xs">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => (
-            <th className="px-3 py-2 text-left font-semibold text-white/60 border-b border-white/[0.08] bg-white/[0.04]">
-              {children}
-            </th>
-          ),
-          td: ({ children }) => (
-            <td className="px-3 py-2 border-b border-white/[0.04] text-white/80">{children}</td>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
+      {cleanedSegments.map((seg, i) =>
+        seg.type === 'thinking' ? (
+          <ThinkingBlock key={i} text={seg.content} />
+        ) : (
+          <ReactMarkdown
+            key={i}
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={markdownComponents}
+          >
+            {seg.content}
+          </ReactMarkdown>
+        )
+      )}
     </div>
   )
 })

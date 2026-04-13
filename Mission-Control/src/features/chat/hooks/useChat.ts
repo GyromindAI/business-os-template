@@ -45,7 +45,7 @@ type SSEEvent =
   | { type: 'tool_done'; toolId: string }
   | { type: 'compact'; tokensBefore?: number; tokensAfter?: number }
   | { type: 'usage'; costUsd: number; inputTokens: number; outputTokens: number; durationMs: number; numTurns: number; contextUsed?: number; contextTotal?: number }
-  | { type: 'result'; text: string }
+  | { type: 'result'; text: string; terminalReason?: string }
   | { type: 'model_changed'; model: string }
   | { type: 'interrupt' }
   | { type: 'error'; message: string }
@@ -87,7 +87,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
     abortRef.current?.abort()
   }, [])
 
-  const sendMessage = useCallback(async (text: string, opts?: { audioUrl?: string; imageUrl?: string; effort?: string; chatSessionId?: string; context?: string }) => {
+  const sendMessage = useCallback(async (text: string, opts?: { audioUrl?: string; imageUrl?: string; effort?: string; chatSessionId?: string; sdkSessionId?: string; context?: string }) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
     intentionalStopRef.current = false
@@ -126,6 +126,7 @@ export function useChat({ sessionId, onSave }: UseChatOptions = {}) {
           ...(opts?.chatSessionId && { chatSessionId: opts.chatSessionId }),
           ...(opts?.audioUrl && { audioUrl: opts.audioUrl }),
           ...(opts?.imageUrl && { imageUrl: opts.imageUrl }),
+          ...(opts?.sdkSessionId && { sdkSessionId: opts.sdkSessionId }),
           ...(opts?.context && { context: opts.context }),
         }),
         signal: abortRef.current.signal,
