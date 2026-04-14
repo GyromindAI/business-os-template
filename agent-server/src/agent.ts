@@ -282,6 +282,7 @@ export async function runAgent(
   sessionId?: string,
   onTyping?: () => void,
   source: OpsSource = 'web',
+  timeoutMs?: number,
 ): Promise<AgentResult> {
   let resultText: string | null = null
   let newSessionId: string | undefined
@@ -293,7 +294,8 @@ export async function runAgent(
 
   const typingInterval = onTyping ? setInterval(onTyping, 4000) : null
   const ac = new AbortController()
-  const timeout = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS)
+  const effectiveTimeout = timeoutMs ?? AGENT_TIMEOUT_MS
+  const timeout = setTimeout(() => ac.abort(), effectiveTimeout)
 
   try {
     const stream = query({

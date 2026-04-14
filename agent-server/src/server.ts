@@ -27,7 +27,7 @@ import { runAgent, runAgentStream, getAvailableModels, getCurrentModel, setCurre
 import { downloadFromUrl, buildPhotoMessage } from './media.js'
 import { getSession, setSession, clearSession, listTasks, getTask, updateTaskStatus, updateTaskAfterRun, saveQueryUsage, getUsageSummary, getDb, getCronSession, setCronSession } from './db.js'
 import { computeNextRun, runDueTasks, CRON_CATEGORY } from './scheduler.js'
-import { buildMemoryContext, saveConversationTurn } from './memory.js'
+import { saveConversationTurn } from './memory.js'
 import { listSessions, getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import { logger } from './logger.js'
 import { validateInput, validateUrl, redactSecrets, MAX_DOWNLOAD_SIZE } from './security.js'
@@ -135,6 +135,9 @@ const SESSION_KEY = 'mc-web'
 // Active query reference for interrupt support
 let activeQuery: Query | null = null
 let activeStream: { interrupted: boolean; clientConnected: boolean } | null = null
+
+let sessionsCache: { data: unknown[]; ts: number } | null = null
+const SESSIONS_CACHE_TTL = 60_000
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -481,10 +484,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     try {
       const sessionId = getSession(SESSION_KEY)
-      const memCtx = await buildMemoryContext(SESSION_KEY, message)
-      const fullMessage = memCtx ? `${memCtx}\n\n${message}` : message
 
-      const result = await runAgent(fullMessage, sessionId)
+      const result = await runAgent(message, sessionId)
 
       if (result.newSessionId) {
         setSession(SESSION_KEY, result.newSessionId)
@@ -518,7 +519,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const url = new URL(req.url, `http://localhost:${PORT}`)
       const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '30', 10), 100)
 
-      const sdkSessions = await listSessions({ dir: PROJECT_ROOT, limit })
+      let sdkSessions: unknown[]
+      if (sessionsCache && Date.now() - sessionsCache.ts < SESSIONS_CACHE_TTL) {
+        sdkSessions = sessionsCache.data.slice(0, limit)
+      } else {
+        sdkSessions = await listSessions({ dir: PROJECT_ROOT, limit })
+        sessionsCache = { data: sdkSessions, ts: Date.now() }
+      }
 
       // Build reverse map: sdk_session_id → chat_session_id
       const allDbSessions = getDb()
@@ -594,8 +601,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // action === 'run' — execute async, return 202 immediately
     sendJSON(res, 202, { ok: true, message: `Task "${taskId}" queued for execution` })
-    runAgent(task.prompt)
+    const category = CRON_CATEGORY[taskId]
+    const cronSessionId = category ? getCronSession(category) : undefined
+    runAgent(task.prompt, cronSessionId)
       .then((result) => {
+        if (category && result.newSessionId) setCronSession(category, result.newSessionId)
         const text = result.text?.trim() ?? ''
         const nextRun = computeNextRun(task.schedule)
         updateTaskAfterRun(taskId, text || '(no output)', nextRun)
